@@ -16,6 +16,17 @@ async function stopAndroidSnapshotHelperRuntimeForDevice(device: DeviceInfo): Pr
   await stopAndroidSnapshotHelperSessionForDevice(device);
 }
 
+/** Reconcile recorder authority left outside a durable resource by a dead local owner. */
+export async function reconcileOrphanedPlatformRecording(
+  device: DeviceInfo,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (device.platform !== 'apple') return;
+  const { reconcileLocalAppleRunnerRecordingOrphan } =
+    await import('./platform-runtime-screen-recording-apple-runner-transport.ts');
+  await reconcileLocalAppleRunnerRecordingOrphan(device, signal);
+}
+
 /** Only a macOS host has an `XCTestDevices` an older agent-device could have redirected. */
 export async function restoreLegacyXctestDeviceSetRedirectRuntime(
   onDiagnostic: (diagnostic: ResourceDiagnostic) => void,

@@ -82,6 +82,16 @@ export function computePlatformMechanicsHubs(
  */
 export const DAEMON_PLATFORM_RUNTIME_EDGES: readonly DaemonPlatformRuntimeEdge[] = [
   {
+    file: 'src/daemon/device/device-claim-reconciliation.ts',
+    target: 'src/platform-runtime-resource-cleanup.ts',
+    symbols: ['reconcileOrphanedPlatformRecording'],
+    classification: 'daemon-policy-essential',
+    rationale:
+      'The dead-owner claim reconciler orders orphan recorder cleanup after exact-owner durable ' +
+      'resources settle and retains the claim on failure. The neutral cleanup operation owns ' +
+      'platform selection and exact recorder authority; the daemon does not select a runner or send commands.',
+  },
+  {
     file: 'src/daemon/server/daemon-runtime.ts',
     target: 'src/platform-runtime.ts',
     symbols: [

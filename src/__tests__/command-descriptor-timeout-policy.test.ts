@@ -38,7 +38,9 @@ test('declared timeout policies are structurally valid', () => {
   for (const descriptor of commandDescriptors) {
     const policy = descriptor.timeoutPolicy;
     assert.ok(
-      policy.onTimeout === 'preserve-daemon' || policy.onTimeout === 'reset-daemon',
+      policy.onTimeout === 'preserve-daemon' ||
+        policy.onTimeout === 'preserve-daemon-and-runner' ||
+        policy.onTimeout === 'reset-daemon',
       `${descriptor.name}: invalid onTimeout ${String(policy.onTimeout)}`,
     );
     if (policy.envelopeMs !== 'unbounded') {
@@ -55,6 +57,14 @@ test('declared timeout policies are structurally valid', () => {
       );
     }
   }
+});
+
+test('runner-preserving timeout commands are a bounded, reviewed set', () => {
+  const preservingRunner = commandDescriptors
+    .filter((descriptor) => descriptor.timeoutPolicy.onTimeout === 'preserve-daemon-and-runner')
+    .map((descriptor) => descriptor.name)
+    .sort();
+  assert.deepEqual(preservingRunner, ['record']);
 });
 
 test('daemon-preserving timeout commands are a bounded, reviewed set', () => {
