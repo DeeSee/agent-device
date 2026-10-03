@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'vitest';
 import { assertFlatToolCall } from './assertions.ts';
+import { assertStagedAppleInstallCalls } from './ios-lifecycle.fixtures.ts';
 import {
   createIosBottomTabsSnapshotWorld,
   createIosPhysicalReinstallWorld,
@@ -285,8 +286,19 @@ test('Provider-backed integration iOS Settings flow uses scripted simctl and run
         'com.apple.Preferences',
       ]);
       assertFlatToolCall(appleTool.calls, ['simctl', 'uninstall', 'sim-1', 'com.example.demo']);
-      assertFlatToolCall(appleTool.calls, ['plist', 'readJson', path.join(appPath, 'Info.plist')]);
-      assertFlatToolCall(appleTool.calls, ['simctl', 'install', 'sim-1', appPath]);
+      const installedPaths = assertStagedAppleInstallCalls(
+        appleTool.calls,
+        ['simctl', 'install', 'sim-1'],
+        appPath,
+        2,
+      );
+      for (const stagedPath of installedPaths) {
+        assertFlatToolCall(appleTool.calls, [
+          'plist',
+          'readJson',
+          path.join(stagedPath, 'Info.plist'),
+        ]);
+      }
       assertFlatToolCall(appleTool.calls, ['simctl', 'pbpaste', 'sim-1']);
       assert.ok(
         inventoryRequests.some(
@@ -366,15 +378,19 @@ test('Provider-backed integration iOS physical reinstall uses scripted devicectl
         PROVIDER_SCENARIO_IOS_REINSTALL_DEVICE.id,
         'com.example.demo',
       ]);
-      assertFlatToolCall(appleTool.calls, [
-        'devicectl',
-        'device',
-        'install',
-        'app',
-        '--device',
-        PROVIDER_SCENARIO_IOS_REINSTALL_DEVICE.id,
+      assertStagedAppleInstallCalls(
+        appleTool.calls,
+        [
+          'devicectl',
+          'device',
+          'install',
+          'app',
+          '--device',
+          PROVIDER_SCENARIO_IOS_REINSTALL_DEVICE.id,
+        ],
         appPath,
-      ]);
+        1,
+      );
     },
   );
 });

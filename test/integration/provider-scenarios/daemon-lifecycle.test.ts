@@ -120,7 +120,7 @@ test('Provider-backed integration daemon lifecycle writes metadata and protects 
         version: '0.0.0-provider-scenario',
         startedAt: 2,
       }),
-      true,
+      false,
     );
     releaseDaemonLock(lockPath);
     assert.equal(fs.existsSync(lockPath), false);

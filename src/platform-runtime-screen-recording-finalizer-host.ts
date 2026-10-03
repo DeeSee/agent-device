@@ -57,6 +57,8 @@ async function finalizeRawRecording(
   input: Parameters<ScreenRecordingRuntimeHost['finalize']['complete']>[0],
   signal?: AbortSignal,
 ) {
+  // Raw completion still requires a video container; decoder inspection is supplementary.
+  await sniffRecording(input);
   const telemetry = signal?.aborted ? undefined : tryPersistRawTelemetry(input);
   const telemetryStatus: 'written' | 'unavailable' = telemetry ? 'written' : 'unavailable';
   return {

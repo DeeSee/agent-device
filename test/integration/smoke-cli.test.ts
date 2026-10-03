@@ -21,7 +21,7 @@ test('cli --help returns usage', () => {
 
   const commands = runCli(['help', 'commands']);
   assert.equal(commands.status, 0, commands.stderr);
-  assert.match(commands.stdout, /reinstall <app> <path>/i);
+  assert.match(commands.stdout, /reinstall <path>/i);
 });
 
 test('cli --version prints semver and exits 0', () => {

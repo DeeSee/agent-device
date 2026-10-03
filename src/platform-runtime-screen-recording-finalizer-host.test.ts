@@ -84,6 +84,24 @@ test('keeps stable raw media terminal when telemetry persistence fails', async (
   });
 });
 
+test('refuses an invalid raw container before publishing telemetry or completion', async () => {
+  video.container.mockResolvedValueOnce(false);
+
+  await expect(
+    createScreenRecordingFinalizer().complete({
+      outputPath: '/tmp/capture.mp4',
+      showTouches: false,
+      gestureEvents: [],
+      targetLabel: 'test recording',
+    }),
+  ).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
+    details: { retriable: true },
+  });
+  expect(telemetry).not.toHaveBeenCalled();
+  expect(video.playable).not.toHaveBeenCalled();
+});
+
 test('keeps retrieved raw media terminal when supplemental finalization is canceled', async () => {
   const controller = new AbortController();
   const reason = new Error('cancel recording finalization');
