@@ -68,6 +68,7 @@ export type CommandExecutionOptions = Partial<ScreenshotRequestFlags> &
 export type InternalRequestOptions = AgentDeviceClientConfig &
   AgentDeviceSelectionOptions &
   CommandExecutionOptions & {
+    signal?: AbortSignal;
     runtime?: SessionRuntimeHints;
     overlayRefs?: boolean;
     surface?: SessionSurface;

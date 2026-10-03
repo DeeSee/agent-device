@@ -16,6 +16,10 @@
     "@agent-device/xml": "workspace:*"
   },
   "exports": {
+    "./app-container-json": {
+      "types": "./src/app-container-json-facade.ts",
+      "default": "./src/app-container-json-facade.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"

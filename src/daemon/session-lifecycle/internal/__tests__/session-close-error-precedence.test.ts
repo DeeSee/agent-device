@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../../../__tests__/test-utils/device-claim-store.ts';
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
   sessionCloseShutdownFixture,
@@ -73,7 +74,7 @@ test('targeted close preserves the platform-close AppError and still runs later 
   expect(session.actions.some((action) => action.command === 'close')).toBe(false);
   // Subsequent independent cleanup still ran, and the session was still deleted.
   expect(mockReleaseRunnerOnClose).toHaveBeenCalledWith(session.device.id, { retain: false });
-  expect(sessionStore.get(sessionName)).toBeUndefined();
+  expect(sessionStore.get(sessionName)?.closeRecovery).toEqual({ state: 'retry-required' });
 });
 
 // #1478-adjacent (device-claim retention observability): a failed platform close deliberately
@@ -97,6 +98,7 @@ test('a failed platform close retains the device claim and reports it', async ()
       booted: true,
     };
     const acquired = await acquireDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device,
       session: sessionName,
       workspace: process.cwd(),
@@ -149,10 +151,10 @@ test('a failed platform close retains the device claim and reports it', async ()
     expect(thrown).toBe(platformCloseError);
     // The session is still deleted (deliberate, pre-existing behavior) even though the claim
     // could not be confirmed released.
-    expect(sessionStore.get(sessionName)).toBeUndefined();
+    expect(sessionStore.get(sessionName)?.closeRecovery).toEqual({ state: 'retry-required' });
 
     // The claim itself was NOT cleared: it is still live, still naming the deleted session.
-    const claimState = inspectDeviceClaims({ serial: device.id })[0];
+    const claimState = inspectDeviceClaims({ serial: device.id }, currentTestDeviceClaimRoot())[0];
     expect(claimState?.classification).toBe('live');
     expect(claimState?.claim?.session).toBe(sessionName);
 
@@ -170,6 +172,22 @@ test('a failed platform close retains the device claim and reports it', async ()
         data: { deviceKey: acquired.ownership.deviceKey, session: sessionName },
       }),
     );
+    const retry = await handleSessionCommands({
+      req: {
+        token: 't',
+        session: sessionName,
+        command: 'close',
+        positionals: ['com.example.app'],
+        flags: {},
+      },
+      sessionName,
+      logPath: path.join(mkdtempForTestSync('daemon-retry-'), 'daemon.log'),
+      sessionStore,
+      invoke: noopInvoke,
+    });
+    expect(retry?.ok).toBe(true);
+    expect(sessionStore.get(sessionName)).toBeUndefined();
+    expect(inspectDeviceClaims({ serial: device.id }, currentTestDeviceClaimRoot())).toEqual([]);
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;
@@ -197,6 +215,7 @@ test('a failing best-effort cleanup also retains the device claim and reports it
       booted: true,
     };
     const acquired = await acquireDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device,
       session: sessionName,
       workspace: process.cwd(),
@@ -265,9 +284,9 @@ test('a failing best-effort cleanup also retains the device claim and reports it
         failedSteps: ['perf_capture'],
       }),
     });
-    expect(sessionStore.get(sessionName)).toBeUndefined();
+    expect(sessionStore.get(sessionName)?.closeRecovery).toEqual({ state: 'retry-required' });
 
-    const claimState = inspectDeviceClaims({ serial: device.id })[0];
+    const claimState = inspectDeviceClaims({ serial: device.id }, currentTestDeviceClaimRoot())[0];
     expect(claimState?.classification).toBe('live');
     expect(claimState?.claim?.session).toBe(sessionName);
 
@@ -305,6 +324,7 @@ test('a successful close clears the device claim', async () => {
       booted: true,
     };
     const acquired = await acquireDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device,
       session: sessionName,
       workspace: process.cwd(),
@@ -339,7 +359,7 @@ test('a successful close clears the device claim', async () => {
 
     expect(response?.ok).toBe(true);
     expect(sessionStore.get(sessionName)).toBeUndefined();
-    expect(inspectDeviceClaims({ serial: device.id })).toEqual([]);
+    expect(inspectDeviceClaims({ serial: device.id }, currentTestDeviceClaimRoot())).toEqual([]);
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;
@@ -405,7 +425,7 @@ test('targeted close skips platform dispatch and preserves the error when the re
   // session was still deleted.
   expect(mockStopIosRunnerSession).toHaveBeenCalledOnce();
   expect(mockReleaseRunnerOnClose).toHaveBeenCalledWith(session.device.id, { retain: false });
-  expect(sessionStore.get(sessionName)).toBeUndefined();
+  expect(sessionStore.get(sessionName)?.closeRecovery).toEqual({ state: 'retry-required' });
 });
 
 // Live evidence (2026-08-02): a plain `open` followed by `close --save-script` used to fold the

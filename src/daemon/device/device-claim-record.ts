@@ -1,3 +1,4 @@
+import { deviceClaimBindingId, type DeviceClaimRoot } from '../../device-claim-root.ts';
 import {
   deviceFieldsFromPublicPlatform,
   isPublicPlatform,
@@ -50,15 +51,22 @@ export type DeviceClaimSessionOwnership = {
   ownerToken: string;
   ownerPid: number;
   ownerStartTime: string | null;
+  claimRootId: string;
+  claimBindingId: string;
 };
 
 /** The ownership token carried by a persisted claim record. */
-export function ownershipFromClaim(claim: DeviceClaim): DeviceClaimSessionOwnership {
+export function ownershipFromClaim(
+  claim: DeviceClaim,
+  root: DeviceClaimRoot,
+): DeviceClaimSessionOwnership {
   return {
     deviceKey: claim.deviceKey,
     ownerToken: claim.ownerToken,
     ownerPid: claim.ownerPid,
     ownerStartTime: claim.ownerStartTime,
+    claimRootId: root.id,
+    claimBindingId: deviceClaimBindingId(root, claim.deviceKey, claim.ownerToken),
   };
 }
 

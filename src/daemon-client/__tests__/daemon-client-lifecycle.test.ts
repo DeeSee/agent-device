@@ -13,6 +13,14 @@ vi.mock('@agent-device/host-kit/command', async (importOriginal) => ({
   runCmdDetachedMonitored: vi.fn(),
   runCmdSync: vi.fn(() => ({ exitCode: 1, stdout: '', stderr: '' })),
 }));
+vi.mock('@agent-device/host-kit/process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@agent-device/host-kit/process')>();
+  return {
+    ...actual,
+    readProcessStartTime: (pid: number) =>
+      pid === 999_997 ? `fixture-start-${pid}` : actual.readProcessStartTime(pid),
+  };
+});
 vi.mock('@agent-device/host-kit/retry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agent-device/host-kit/retry')>()),
   sleep: vi.fn(async () => {}),
@@ -20,7 +28,7 @@ vi.mock('@agent-device/host-kit/retry', async (importOriginal) => ({
 
 import { resolveDaemonPaths, type DaemonPaths } from '../../daemon-resolution.ts';
 import { sendToDaemon, type DaemonRequest, type DaemonResponse } from '../daemon-client.ts';
-import { attachActiveSessionAddressHint } from '../daemon-client-lifecycle.ts';
+import { attachActiveSessionAddressHint } from '../daemon-client-replay.ts';
 import { sendRequest } from '../daemon-client-transport.ts';
 import {
   closeLoopbackServer,
@@ -36,7 +44,6 @@ import {
 import { AppError } from '@agent-device/kernel/errors';
 import { runCmdDetachedMonitored, runCmdSync } from '@agent-device/host-kit/command';
 import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
-import { readProcessStartTime } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
 import { readVersion } from '@agent-device/host-kit/version';
 
@@ -54,6 +61,11 @@ type DaemonInfoFixture = {
 const mockRunCmdDetached = vi.mocked(runCmdDetachedMonitored);
 const mockRunCmdSync = vi.mocked(runCmdSync);
 const mockSleep = vi.mocked(sleep);
+const FIXTURE_DAEMON_PID = 999_997;
+
+function fixtureProcessStartTime(pid: number): string {
+  return `fixture-start-${pid}`;
+}
 
 afterEach(() => {
   mockRunCmdDetached.mockReset();
@@ -67,15 +79,16 @@ function makeTempStateDir(prefix: string): string {
 }
 
 function writeDaemonInfo(paths: DaemonPaths, info: DaemonInfoFixture): void {
+  const pid = info.pid ?? FIXTURE_DAEMON_PID;
   fs.mkdirSync(paths.baseDir, { recursive: true });
   fs.writeFileSync(
     paths.infoPath,
     `${JSON.stringify({
       token: info.token ?? 'local-secret',
-      pid: info.pid ?? process.pid,
+      pid,
       version: info.version ?? readVersion(),
       codeSignature: info.codeSignature ?? currentDaemonCodeSignature(),
-      processStartTime: info.processStartTime ?? readProcessStartTime(process.pid) ?? undefined,
+      processStartTime: info.processStartTime ?? fixtureProcessStartTime(pid),
       port: info.port,
       httpPort: info.httpPort,
       transport: info.transport,
@@ -91,7 +104,11 @@ function writeDaemonLock(
   fs.mkdirSync(paths.baseDir, { recursive: true });
   fs.writeFileSync(
     paths.lockPath,
-    `${JSON.stringify({ startedAt: Date.now(), ...lock })}\n`,
+    `${JSON.stringify({
+      startedAt: Date.now(),
+      ...lock,
+      processStartTime: lock.processStartTime ?? fixtureProcessStartTime(lock.pid),
+    })}\n`,
     'utf8',
   );
 }
@@ -151,12 +168,11 @@ function installSpawnedHttpDaemonAtOwnedStateDir(
     const ownedStateDir = String(options?.env?.AGENT_DEVICE_STATE_DIR);
     onStateDir(ownedStateDir);
     const ownedPaths = resolveDaemonPaths(ownedStateDir);
-    writeDaemonInfo(ownedPaths, { httpPort, transport: 'http' });
     writeDaemonLock(ownedPaths, {
-      pid: process.pid,
-      processStartTime: readProcessStartTime(process.pid) ?? undefined,
+      pid: FIXTURE_DAEMON_PID,
     });
-    return { pid: process.pid, exited: new Promise(() => {}) };
+    writeDaemonInfo(ownedPaths, { httpPort, transport: 'http' });
+    return { pid: FIXTURE_DAEMON_PID, exited: new Promise(() => {}) };
   });
 }
 
@@ -194,12 +210,11 @@ async function startHangingHttpDaemonFixture(): Promise<HttpDaemonFixture> {
 function installSpawnedHttpDaemon(paths: DaemonPaths, httpPort: number): void {
   mockRunCmdDetached.mockImplementation((_command, _args, options) => {
     assert.equal(options?.env?.AGENT_DEVICE_STATE_DIR, paths.baseDir);
-    writeDaemonInfo(paths, { httpPort, transport: 'http' });
     writeDaemonLock(paths, {
-      pid: process.pid,
-      processStartTime: readProcessStartTime(process.pid) ?? undefined,
+      pid: FIXTURE_DAEMON_PID,
     });
-    return { pid: process.pid, exited: new Promise(() => {}) };
+    writeDaemonInfo(paths, { httpPort, transport: 'http' });
+    return { pid: FIXTURE_DAEMON_PID, exited: new Promise(() => {}) };
   });
 }
 
@@ -298,7 +313,7 @@ function mockSocketErrorAfterWrite(failingPort: number): {
   };
 }
 
-test('sendToDaemon retries daemon spawn failures and cleans partial metadata on terminal failure', async () => {
+test('sendToDaemon does not retry a spawn failure after malformed metadata claims authority', async () => {
   const stateDir = makeTempStateDir('agent-device-daemon-spawn-retry-');
   const paths = resolveDaemonPaths(stateDir);
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', stateDir);
@@ -329,7 +344,7 @@ test('sendToDaemon retries daemon spawn failures and cleans partial metadata on 
 
     assert.ok(thrown instanceof AppError);
     assert.equal(thrown.message, 'Failed to start daemon');
-    assert.equal(thrown.details?.startError, 'spawn failed 2');
+    assert.equal(thrown.details?.startError, 'spawn failed 1');
     assert.equal(thrown.details?.startupAttempts, 2);
     const cleanupResults = thrown.details?.cleanupResults;
     assert.ok(Array.isArray(cleanupResults));
@@ -339,15 +354,15 @@ test('sendToDaemon retries daemon spawn failures and cleans partial metadata on 
         removedInfo: result.removedInfo,
         removedLock: result.removedLock,
       })),
-      [
-        { reason: 'start_error', removedInfo: true, removedLock: true },
-        { reason: 'start_error', removedInfo: true, removedLock: true },
-      ],
+      [{ reason: 'start_error', removedInfo: false, removedLock: false }],
     );
-    assert.equal(attempts, 2);
-    assert.equal(mockSleep.mock.calls[0]?.[0], 150);
-    assert.equal(fs.existsSync(paths.infoPath), false);
-    assert.equal(fs.existsSync(paths.lockPath), false);
+    assert.equal(cleanupResults[0]?.retainedInfoProcess, true);
+    assert.equal(cleanupResults[0]?.retainedLockProcess, true);
+    assert.match(String(cleanupResults[0]?.error), /malformed/);
+    assert.equal(attempts, 1);
+    assert.equal(mockSleep.mock.calls.length, 0);
+    assert.equal(fs.existsSync(paths.infoPath), true);
+    assert.equal(fs.existsSync(paths.lockPath), true);
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
@@ -409,7 +424,7 @@ test('sendToDaemon removes stale daemon lock before spawning a fresh daemon', as
   const daemon = await startHttpDaemonFixture({ via: 'fresh-daemon' });
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', stateDir);
   writeDaemonLock(paths, {
-    pid: process.pid,
+    pid: 999_996,
     processStartTime: 'stale-start-time',
   });
   installSpawnedHttpDaemon(paths, daemon.port);
@@ -429,7 +444,7 @@ test('sendToDaemon removes stale daemon lock before spawning a fresh daemon', as
     };
     assert.deepEqual(response, { ok: true, data: { via: 'fresh-daemon' } });
     assert.equal(mockRunCmdDetached.mock.calls.length, 1);
-    assert.equal(freshLock.pid, process.pid);
+    assert.equal(freshLock.pid, FIXTURE_DAEMON_PID);
     assert.notEqual(freshLock.processStartTime, 'stale-start-time');
     assert.deepEqual(daemon.seenPaths, ['GET /health', 'POST /rpc']);
   } finally {
@@ -646,8 +661,10 @@ test('sendRequest timeout cleanup uses resolved daemon paths instead of request 
     assert.ok(thrown instanceof AppError);
     assert.equal(thrown.message, 'Daemon request timed out');
     assert.deepEqual(daemon.seenPaths, ['POST /rpc']);
-    assert.equal(fs.existsSync(daemonPaths.infoPath), false);
-    assert.equal(fs.existsSync(daemonPaths.lockPath), false);
+    // A request timeout is ambiguous: the exact daemon may still be processing it.
+    // The client may signal that exact owner, but cannot synchronously erase its authority.
+    assert.equal(fs.existsSync(daemonPaths.infoPath), true);
+    assert.equal(fs.existsSync(daemonPaths.lockPath), true);
     assert.equal(fs.existsSync(requestFlagPaths.infoPath), true);
     assert.equal(fs.existsSync(requestFlagPaths.lockPath), true);
   } finally {
@@ -738,11 +755,7 @@ test('sendToDaemon does not replay over HTTP after the socket request is written
   }
 });
 
-// --- ADR 0012 decision 6, R7 (Fix 1, C1): a repair-armed `replay --save-script`
-// that comes back as a HELD divergence (the daemon's `resume.repairSessionHeld`
-// signal) must keep its owning (owned/ephemeral) daemon alive and addressable.
-// The keep-alive keys on that signal — the REPAIR-ARMED condition — NOT on
-// `resume.allowed`, which reports only plan-resumability. ---
+// ADR 0012: repairSessionHeld, not resume.allowed, is the keep-alive authority.
 
 function heldDivergenceError(
   resume: Record<string, unknown> = { allowed: true, from: 3, planDigest: 'digest-abc' },
@@ -805,8 +818,6 @@ test('sendToDaemon keeps an owned ephemeral daemon alive and hints its --state-d
     assert.match(String(response.error.hint), /--state-dir/);
     assert.ok(String(response.error.hint).includes(ownedStateDir));
 
-    // The daemon was NOT torn down: metadata and the owned state dir itself
-    // are still on disk, addressable by a follow-up command's --state-dir.
     const ownedPaths = resolveDaemonPaths(ownedStateDir);
     assert.equal(fs.existsSync(ownedPaths.infoPath), true);
     assert.equal(fs.existsSync(ownedPaths.lockPath), true);
@@ -823,8 +834,7 @@ test('C1: keep-alive keys on repairSessionHeld, NOT resume.allowed — a HELD di
     return;
   }
 
-  // resume.allowed:false (plan not resumable), but the daemon still HELD the
-  // repair session — the agent must be able to reach it to close/inspect.
+  // A held repair remains addressable even when its plan is not resumable.
   const daemon = await startHttpDaemonErrorFixture(
     heldDivergenceError({
       allowed: false,
@@ -883,8 +893,6 @@ test('sendToDaemon tears down an owned ephemeral daemon on an UNHELD divergence 
     if (response.ok) return;
     assert.equal(response.error.hint, undefined);
     assert.ok(ownedStateDir.length > 0);
-    // No held signal (`resume.allowed:true` alone is not the keep-alive key) —
-    // ordinary one-shot teardown still applies.
     assert.equal(fs.existsSync(ownedStateDir), false);
   } finally {
     await closeLoopbackServer(daemon.server);

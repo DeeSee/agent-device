@@ -1,4 +1,6 @@
 import type {
+  AppContainerWriteJsonInput,
+  AppContainerWriteJsonResult,
   AppDeploymentInput,
   AppDeploymentResult,
   AppDeploymentRuntimeOperations,
@@ -22,6 +24,7 @@ import { ensureAppleReady } from '../readiness/runtime.ts';
 import { scopeSimctlArgsForDevice } from '../core/simctl.ts';
 
 const available = Object.freeze({ available: true } as const);
+const APP_CONTAINER_JSON_MAX_BYTES = 256 * 1024;
 const coreDeviceRequired = Object.freeze({
   available: false,
   reason: 'unsupported-device-backend',
@@ -46,6 +49,7 @@ export function appleAppDeploymentFacts(device: DeviceInfo): Readonly<{
   materializeAppSource: RuntimeOperationFact;
   deployMaterializedApp: RuntimeOperationFact;
   sendPushNotification: RuntimeOperationFact;
+  writeAppContainerJson: RuntimeOperationFact;
 }> {
   const deploy = appleDeployFact(device);
   return Object.freeze({
@@ -53,6 +57,7 @@ export function appleAppDeploymentFacts(device: DeviceInfo): Readonly<{
     materializeAppSource: deploy,
     deployMaterializedApp: deploy,
     sendPushNotification: applePushFact(device),
+    writeAppContainerJson: appleContainerJsonFact(device),
   });
 }
 
@@ -82,7 +87,43 @@ export function createAppleAppDeploymentOperations(params: {
           },
         }
       : {}),
+    ...(facts.writeAppContainerJson.available
+      ? {
+          writeAppContainerJson: async (input: AppContainerWriteJsonInput) =>
+            await writeAppleAppContainerJson(host, device, input, signal),
+        }
+      : {}),
   });
+}
+
+async function writeAppleAppContainerJson(
+  host: PlatformRuntimeHost,
+  device: DeviceInfo,
+  input: AppContainerWriteJsonInput,
+  signal: AbortSignal,
+): Promise<AppContainerWriteJsonResult> {
+  const serializedValue = `${JSON.stringify(input.value)}\n`;
+  const byteLength = Buffer.byteLength(serializedValue, 'utf8');
+  if (byteLength > APP_CONTAINER_JSON_MAX_BYTES) {
+    throw new AppError(
+      'INVALID_ARGS',
+      `App container JSON must not exceed ${APP_CONTAINER_JSON_MAX_BYTES} bytes`,
+    );
+  }
+  await ensureAppleReady(host, device, signal);
+  const appId = await host.appleDeployment.resolveAppBundleId(device, input.app);
+  const receipt = await host.appleDeployment.writeAppContainerJson(
+    device,
+    { appId, containerPath: input.containerPath, serializedValue },
+    signal,
+  );
+  return {
+    appId,
+    containerPath: input.containerPath,
+    sha256: receipt.sha256,
+    byteLength: receipt.byteLength,
+    verified: true,
+  };
 }
 
 async function deployAppleApp(
@@ -96,13 +137,35 @@ async function deployAppleApp(
   // observable when artifact preparation fails, so it belongs to the platform deployment facet.
   if (input.replaceExisting) {
     return await host.appleDeployment.withInvalidatedAppResolutionCache(device, async () => {
-      const bundleId = await host.appleDeployment.resolveAppBundleId(device, input.app);
-      await uninstallAppleApp(host, device, bundleId, signal);
+      const appHint = input.app.trim();
+      if (appHint) {
+        const bundleId = await host.appleDeployment.resolveAppBundleId(device, appHint);
+        await uninstallAppleApp(host, device, bundleId, signal);
+        const artifact = await host.appleDeployment.prepareArtifact(
+          { source: { kind: 'path', path: input.appPath } },
+          { appIdentifierHint: appHint, signal },
+        );
+        try {
+          await installAppleApp(host, device, artifact.installablePath, signal);
+          return { bundleId, launchTarget: bundleId };
+        } finally {
+          await artifact.cleanup();
+        }
+      }
+
       const artifact = await host.appleDeployment.prepareArtifact(
         { source: { kind: 'path', path: input.appPath } },
-        { appIdentifierHint: input.app, signal },
+        { signal },
       );
       try {
+        const bundleId = artifact.bundleId;
+        if (!bundleId) {
+          throw new AppError(
+            'INVALID_ARGS',
+            'Could not determine the app bundle identifier from the replacement artifact',
+          );
+        }
+        await uninstallAppleApp(host, device, bundleId, signal);
         await installAppleApp(host, device, artifact.installablePath, signal);
         return { bundleId, launchTarget: bundleId };
       } finally {
@@ -258,6 +321,11 @@ function appleDeployFact(device: DeviceInfo): RuntimeOperationFact {
 function applePushFact(device: DeviceInfo): RuntimeOperationFact {
   if (!isSupportedAppleDeploymentLeaf(device)) return unsupportedLeaf;
   return device.kind === 'simulator' ? available : simulatorOnly;
+}
+
+function appleContainerJsonFact(device: DeviceInfo): RuntimeOperationFact {
+  if (!isSupportedAppleDeploymentLeaf(device)) return unsupportedLeaf;
+  return device.kind === 'simulator' || device.kind === 'device' ? available : unsupportedKind;
 }
 
 function isSupportedAppleDeploymentLeaf(device: DeviceInfo): boolean {

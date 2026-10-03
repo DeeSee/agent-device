@@ -24,7 +24,9 @@ export type PreparedUploadArtifact = {
 export async function prepareUploadArtifact(
   localPath: string,
   requestedPlatform: string | undefined,
+  signal?: AbortSignal,
 ): Promise<PreparedUploadArtifact> {
+  throwIfUploadCanceled(signal);
   const stat = fs.statSync(localPath);
   const fileName = path.basename(localPath);
   const isDirectory = stat.isDirectory();
@@ -33,8 +35,9 @@ export async function prepareUploadArtifact(
   const cleanupPaths: string[] = [];
   try {
     const payloadPath = isDirectory
-      ? await createGzipTarArchive(localPath, cleanupPaths)
+      ? await createGzipTarArchive(localPath, cleanupPaths, signal)
       : localPath;
+    throwIfUploadCanceled(signal);
     const payloadStat = fs.statSync(payloadPath);
 
     return {
@@ -43,7 +46,7 @@ export async function prepareUploadArtifact(
       artifactType: isDirectory ? 'app-bundle' : 'file',
       platform,
       contentType: isDirectory ? 'application/gzip' : DEFAULT_CONTENT_TYPE,
-      sha256: await computeFileHash(payloadPath),
+      sha256: await computeFileHash(payloadPath, signal),
       sizeBytes: payloadStat.size,
       cleanup: () => cleanupUploadPaths(cleanupPaths),
     };
@@ -53,7 +56,11 @@ export async function prepareUploadArtifact(
   }
 }
 
-async function createGzipTarArchive(localPath: string, cleanupPaths: string[]): Promise<string> {
+async function createGzipTarArchive(
+  localPath: string,
+  cleanupPaths: string[],
+  signal: AbortSignal | undefined,
+): Promise<string> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `agent-device-upload-${randomUUID()}-`));
   cleanupPaths.push(tempDir);
   const archivePath = path.join(tempDir, `${path.basename(localPath)}.tar.gz`);
@@ -65,6 +72,7 @@ async function createGzipTarArchive(localPath: string, cleanupPaths: string[]): 
         ...process.env,
         COPYFILE_DISABLE: '1',
       },
+      signal,
     },
   );
   return archivePath;
@@ -91,7 +99,10 @@ function cleanupUploadPaths(cleanupPaths: string[]): void {
   }
 }
 
-async function computeFileHash(localPath: string): Promise<string> {
+async function computeFileHash(
+  localPath: string,
+  signal: AbortSignal | undefined,
+): Promise<string> {
   const hash = createHash(ARTIFACT_HASH_ALGORITHM);
   const sink = new Writable({
     write(chunk: Buffer, _encoding, callback) {
@@ -99,7 +110,8 @@ async function computeFileHash(localPath: string): Promise<string> {
       callback();
     },
   });
-  await pipeline(fs.createReadStream(localPath), sink).catch((error: unknown) => {
+  await pipeline(fs.createReadStream(localPath), sink, { signal }).catch((error: unknown) => {
+    if (signal?.aborted) throw signal.reason;
     throw new AppError(
       'COMMAND_FAILED',
       'Failed to read local artifact',
@@ -108,4 +120,8 @@ async function computeFileHash(localPath: string): Promise<string> {
     );
   });
   return hash.digest('hex');
+}
+
+function throwIfUploadCanceled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason;
 }

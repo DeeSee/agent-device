@@ -77,6 +77,7 @@ const MECHANICS_FACET_SUBPATHS: Readonly<Partial<Record<PlatformFamily, readonly
     APPLE_RUNNER_FACADE,
     APPLE_RUNNER_TEST_HOST,
     '@agent-device/platform-apple/app-lifecycle',
+    '@agent-device/platform-apple/app-container-json',
     '@agent-device/platform-apple/app-resolution',
     '@agent-device/platform-apple/debug-symbols',
     '@agent-device/platform-apple/doctor',

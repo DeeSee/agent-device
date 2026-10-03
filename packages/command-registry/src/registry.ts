@@ -27,6 +27,7 @@ import {
   deployAppUse,
   readyMaterializeAndDeployAppUse,
   readySendPushNotificationUse,
+  writeAppContainerJsonUse,
 } from '@agent-device/contracts/app-deployment-runtime-plan';
 import {
   closeApplicationRuntimePlanUses,
@@ -359,6 +360,11 @@ const PRESERVE_DAEMON_TIMEOUT_POLICY: CommandTimeoutPolicy = {
 
 // Installs run long device subprocesses; their envelope stays above the longest
 // platform install subprocess timeout (see INSTALL_REQUEST_TIMEOUT_MS).
+const PRESERVE_DAEMON_AND_RUNNER_TIMEOUT_POLICY: CommandTimeoutPolicy = {
+  ...DEFAULT_TIMEOUT_POLICY,
+  onTimeout: 'preserve-daemon-and-runner',
+};
+
 const INSTALL_TIMEOUT_POLICY: CommandTimeoutPolicy = {
   ...DEFAULT_TIMEOUT_POLICY,
   envelopeMs: INSTALL_REQUEST_TIMEOUT_MS,
@@ -586,6 +592,32 @@ export const RAW_COMMAND_DESCRIPTORS = [
   },
 
   // -- session (route: session) --
+  {
+    name: 'app_container_write_json',
+    deviceClaimPolicy: 'transient-exclusive',
+    ...(ownerFilesEnabled
+      ? { ownerFiles: ['src/daemon/handlers/session-app-container-files.ts'] as const }
+      : {}),
+    catalog: { group: 'internal', key: 'appContainerWriteJson' },
+    recordsSessionAction: false,
+    daemon: { route: 'session', refFrameEffect: 'may-invalidate' },
+    timeoutPolicy: DEFAULT_TIMEOUT_POLICY,
+    batchable: false,
+    platformExecution: { kind: 'device-runtime', use: writeAppContainerJsonUse },
+  },
+  {
+    name: 'session_reserve',
+    deviceClaimPolicy: 'acquire-session',
+    ...(ownerFilesEnabled
+      ? { ownerFiles: ['src/daemon/session-lifecycle/internal/session-reserve.ts'] as const }
+      : {}),
+    catalog: { group: 'internal', key: 'sessionReserve' },
+    recordsSessionAction: false,
+    daemon: { route: 'session', refFrameEffect: 'preserve' },
+    timeoutPolicy: DEFAULT_TIMEOUT_POLICY,
+    batchable: false,
+    platformExecution: NO_PLATFORM_EXECUTION,
+  },
   {
     name: 'session_list',
     deviceClaimPolicy: 'none',
@@ -1234,7 +1266,7 @@ export const RAW_COMMAND_DESCRIPTORS = [
       allowSessionlessDefaultDevice: isRecordingStartRequest,
     },
     platformExecution: { kind: 'device-runtime', uses: screenRecordingRuntimePlanUses },
-    timeoutPolicy: DEFAULT_TIMEOUT_POLICY,
+    timeoutPolicy: PRESERVE_DAEMON_AND_RUNNER_TIMEOUT_POLICY,
     batchable: true,
   },
   {

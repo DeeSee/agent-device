@@ -28,6 +28,7 @@ function declarations(): PlatformPackageDeclaration[] {
         ? [
             '@agent-device/platform-apple',
             '@agent-device/platform-apple/app-lifecycle',
+            '@agent-device/platform-apple/app-container-json',
             '@agent-device/platform-apple/app-resolution',
             '@agent-device/platform-apple/debug-symbols',
             '@agent-device/platform-apple/doctor',
@@ -314,6 +315,7 @@ test('the apple runner mechanics facet subpaths are the enumerated exception', (
 test('the Apple domain facades preserve synchronous helpers without widening the root facade', () => {
   const sources = validSources();
   for (const specifier of [
+    '@agent-device/platform-apple/app-container-json',
     '@agent-device/platform-apple/app-resolution',
     '@agent-device/platform-apple/install-artifact',
     '@agent-device/platform-apple/perf',

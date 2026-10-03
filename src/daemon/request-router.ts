@@ -554,11 +554,13 @@ function canRunReplayActionInCurrentScope(
 }
 
 function finalizeThrownRequestError(error: unknown): DaemonResponse {
+  const diagnosticError = normalizeError(error);
   emitDiagnostic({
     level: 'error',
     phase: 'request_failed',
     data: {
-      error: error instanceof Error ? error.message : String(error),
+      code: diagnosticError.code,
+      message: diagnosticError.message,
     },
   });
   const details = getDiagnosticsMeta();

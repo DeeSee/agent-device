@@ -122,6 +122,7 @@ export const STORE_OWNED_SESSION_STATE_FIELDS: ReadonlySet<string> = new Set([
   'appLog',
   'appLogFailure',
   'audioProbe',
+  'closeRecovery',
   'createdAt',
   'device',
   // #2833: the request path reports session activity through `SessionStore.noteSessionActivity`, so

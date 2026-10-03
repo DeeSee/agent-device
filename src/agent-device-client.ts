@@ -12,6 +12,9 @@ import type {
   AppInstallOptions,
   AppListOptions,
   AppOpenOptions,
+  AppContainerWriteJsonOptions,
+  CaptureScreenshotArtifactOptions,
+  CaptureScreenshotArtifactResult,
   CaptureScreenshotOptions,
   CaptureScreenshotResult,
   CaptureSnapshotOptions,
@@ -24,8 +27,11 @@ import type {
   RotateGestureOptions,
   SessionSaveScriptOptions,
   SessionSaveScriptResult,
+  SessionReserveOptions,
+  SessionReserveResult,
   SwipeGestureOptions,
   TransformGestureOptions,
+  StopLocalDaemon,
 } from '@agent-device/contracts/client';
 import type { AgentArtifactsResult } from '@agent-device/contracts/observability';
 import type { MetroPrepareOptions } from '@agent-device/contracts/remote';
@@ -34,7 +40,11 @@ import {
   type ResponseLevel,
   type SessionRuntimeHints,
 } from '@agent-device/kernel/contracts';
-import { AppError, throwDaemonError } from '@agent-device/kernel/errors';
+import {
+  AppError,
+  createRequestCanceledError,
+  throwDaemonError,
+} from '@agent-device/kernel/errors';
 import {
   buildMeta,
   normalizeDeployResult,
@@ -63,6 +73,7 @@ import {
 import type { CommandResult } from '@agent-device/command-registry/command-result';
 import { sendToDaemon } from './daemon-client/daemon-client.ts';
 import { resolveDaemonPaths } from './daemon-resolution.ts';
+import { createClientDaemonLifecycle } from './client/client-daemon-lifecycle.ts';
 import { prepareMetroRuntime, reloadMetro } from './metro/client-metro.ts';
 import {
   clearMetroSessionHints,
@@ -77,8 +88,10 @@ import { normalizeScreenshotCaptureResult } from './client/screenshot-result.ts'
 
 export function createAgentDeviceClient(
   config: AgentDeviceClientConfig = {},
-  deps: { transport?: AgentDeviceDaemonTransport } = {},
+  deps: { transport?: AgentDeviceDaemonTransport; stopLocalDaemon?: StopLocalDaemon } = {},
 ): AgentDeviceClient {
+  const daemonLifecycle = createClientDaemonLifecycle(config, deps.stopLocalDaemon);
+  config = daemonLifecycle.config;
   const transport = deps.transport ?? sendToDaemon;
 
   // A non-default responseLevel (digest/full) makes the daemon return a leveled
@@ -94,7 +107,9 @@ export function createAgentDeviceClient(
     metadataFlags?: Partial<CommandFlags>,
     input?: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
+    daemonLifecycle.beforeRequest();
     const merged = mergeClientOptions(config, options);
+    throwIfClientRequestCanceled(merged.signal);
     const request = {
       session: resolveSessionName(merged.session),
       command,
@@ -104,7 +119,11 @@ export function createAgentDeviceClient(
       runtime: merged.runtime,
       meta: buildMeta(merged),
     };
-    const response = await transport(request, { authToken: merged.daemonAuthToken });
+    const response = await transport(request, {
+      authToken: merged.daemonAuthToken,
+      signal: merged.signal,
+      ...daemonLifecycle.transportContext,
+    });
     if (!response.ok) {
       throwDaemonError(response.error);
     }
@@ -135,6 +154,7 @@ export function createAgentDeviceClient(
     resolveSessionName(mergeClientOptions(config, options).session);
 
   return {
+    daemon: { stop: daemonLifecycle.stop },
     command: {
       wait: async (options) => await executeCommand<CommandResult<'wait'>>('wait', options),
       alert: async (options = {}) => await executeCommand('alert', options),
@@ -186,6 +206,24 @@ export function createAgentDeviceClient(
         await executeCommand<CommandResult<'shutdown'>>('shutdown', options),
     },
     sessions: {
+      reserve: async (options: SessionReserveOptions): Promise<SessionReserveResult> => {
+        const data = await execute(INTERNAL_COMMANDS.sessionReserve, [], options);
+        const status = data.status;
+        if (status !== 'created' && status !== 'already_reserved') {
+          throw new AppError('COMMAND_FAILED', 'Daemon returned an invalid reservation status.');
+        }
+        const session = readRequiredString(data, 'session');
+        const device = normalizeOpenDevice(data);
+        if (!device) {
+          throw new AppError('COMMAND_FAILED', 'Daemon returned an invalid reserved device.');
+        }
+        return {
+          session,
+          status,
+          device,
+          identifiers: { session, ...device.identifiers },
+        };
+      },
       list: async (options = {}) => await listSessions(options),
       // Pure local resolution; mirrors how the daemon client picks its state dir.
       stateDir: async (options = {}) => {
@@ -198,11 +236,26 @@ export function createAgentDeviceClient(
           const data = await executeCommand<Record<string, unknown>>('close', options);
           return {
             session,
+            disposition: 'closed',
             shutdown: normalizeTargetShutdownResult(data.shutdown),
             provider: readObject(data.provider),
             savedScript: readOptionalString(data, 'savedScript'),
             identifiers: { session },
           };
+        } catch (error) {
+          if (
+            error instanceof AppError &&
+            error.code === 'SESSION_NOT_FOUND' &&
+            options.shutdown !== true &&
+            (options.saveScript === undefined || options.saveScript === false)
+          ) {
+            return {
+              session,
+              disposition: 'already_absent',
+              identifiers: { session },
+            };
+          }
+          throw error;
         } finally {
           // Close is teardown intent: drop the dev-server binding even if the daemon call fails.
           clearMetroSessionHintsQuietly(config, options);
@@ -313,6 +366,39 @@ export function createAgentDeviceClient(
       push: async (options) => await executeCommand<CommandResult<'push'>>('push', options),
       triggerEvent: async (options) =>
         await executeCommand<CommandResult<'trigger-app-event'>>('trigger-app-event', options),
+      files: {
+        writeJson: async (options: AppContainerWriteJsonOptions) => {
+          const data = await execute(
+            INTERNAL_COMMANDS.appContainerWriteJson,
+            [],
+            options,
+            undefined,
+            {
+              app: options.app,
+              containerPath: options.containerPath,
+              value: options.value,
+            },
+          );
+          const sha256 = readRequiredString(data, 'sha256');
+          const byteLength = data.byteLength;
+          if (
+            !/^[a-f0-9]{64}$/.test(sha256) ||
+            typeof byteLength !== 'number' ||
+            !Number.isInteger(byteLength) ||
+            byteLength < 0 ||
+            data.verified !== true
+          ) {
+            throw new AppError('COMMAND_FAILED', 'Daemon returned an invalid JSON write receipt.');
+          }
+          return {
+            appId: readRequiredString(data, 'appId'),
+            containerPath: readRequiredString(data, 'containerPath'),
+            sha256,
+            byteLength: byteLength as number,
+            verified: true,
+          };
+        },
+      },
     },
     materializations: {
       release: async (options: MaterializationReleaseOptions) =>
@@ -380,6 +466,55 @@ export function createAgentDeviceClient(
         // default shape; the runtime value is the leveled payload.)
         if (isLeveledResponse(options)) return data as unknown as CaptureScreenshotResult;
         return normalizeScreenshotCaptureResult(data, session);
+      },
+      screenshotArtifact: async (
+        options: CaptureScreenshotArtifactOptions = {},
+      ): Promise<CaptureScreenshotArtifactResult> => {
+        if (daemonLifecycle.daemonBaseUrl !== undefined) {
+          throw new AppError(
+            'UNSUPPORTED_OPERATION',
+            'screenshotArtifact is available only with a host-local agent-device daemon.',
+            { reason: 'host_local_only' },
+          );
+        }
+        if (Object.hasOwn(options, 'path') || Object.hasOwn(options, 'responseLevel')) {
+          throw new AppError(
+            'INVALID_ARGS',
+            'screenshotArtifact owns its temporary output and default response shape.',
+          );
+        }
+        const session = resolveRequestSession(options);
+        const { captureLocalScreenshotArtifact } =
+          await import('./client/local-screenshot-artifact.ts');
+        const capture = await captureLocalScreenshotArtifact(async (outputPath) => {
+          const request: CaptureScreenshotOptions = {
+            ...options,
+            path: outputPath,
+          };
+          const data = await executeCommand<Record<string, unknown>>('screenshot', request);
+          if (readRequiredString(data, 'path') !== outputPath) {
+            throw new AppError(
+              'COMMAND_FAILED',
+              'Local screenshot command returned an unexpected artifact path.',
+              { reason: 'unexpected_path' },
+            );
+          }
+          return data;
+        });
+        const data = capture.result;
+        const screenshot = normalizeScreenshotCaptureResult(data, session);
+        return {
+          bytes: capture.bytes,
+          width: screenshot?.width,
+          height: screenshot?.height,
+          logicalWidth: screenshot?.logicalWidth,
+          logicalHeight: screenshot?.logicalHeight,
+          pixelDensity: screenshot?.pixelDensity,
+          overlayRefs: screenshot?.overlayRefs,
+          displayRotation: screenshot.displayRotation,
+          warnings: screenshot.warnings,
+          identifiers: { session },
+        };
       },
       diff: async (options) => await executeCommand<CommandResult<'diff'>>('diff', options),
     },
@@ -564,6 +699,10 @@ function mergeClientOptions(
   options: InternalRequestOptions,
 ): InternalRequestOptions {
   return { ...config, ...options };
+}
+
+function throwIfClientRequestCanceled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createRequestCanceledError();
 }
 
 function metroSessionHintsScope(

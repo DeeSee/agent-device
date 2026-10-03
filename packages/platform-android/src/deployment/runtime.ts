@@ -28,6 +28,7 @@ export function androidAppDeploymentFacts(device: DeviceInfo): Readonly<{
   materializeAppSource: RuntimeOperationFact;
   deployMaterializedApp: RuntimeOperationFact;
   sendPushNotification: RuntimeOperationFact;
+  writeAppContainerJson: RuntimeOperationFact;
 }> {
   const fact = androidDeployFact(device);
   return Object.freeze({
@@ -35,6 +36,11 @@ export function androidAppDeploymentFacts(device: DeviceInfo): Readonly<{
     materializeAppSource: fact,
     deployMaterializedApp: fact,
     sendPushNotification: fact,
+    writeAppContainerJson: Object.freeze({
+      available: false,
+      reason: 'unsupported-platform-leaf',
+      hint: 'Verified app container JSON writes are currently supported only on Apple targets.',
+    }),
   });
 }
 
@@ -69,19 +75,29 @@ async function deployAndroidApp(
     // cache boundary here in the Android deployment owner: clear before boot/resolve/uninstall
     // and after materialization/install, including partial failures.
     return await host.androidDeployment.withInvalidatedAppResolutionCache(device, async () => {
+      const appHint = input.app.trim();
       let artifact: MaterializedAppSource | undefined;
       try {
-        if (currentManagedDeviceScope()) {
+        if (currentManagedDeviceScope() || !appHint) {
           artifact = await host.androidDeployment.prepareArtifact(
             { source: { kind: 'path', path: input.appPath } },
-            { resolveIdentity: false, signal },
+            { resolveIdentity: !appHint, signal },
           );
-          assertManagedAndroidInstallablePath(artifact.installablePath);
+          if (currentManagedDeviceScope())
+            assertManagedAndroidInstallablePath(artifact.installablePath);
         }
         if (device.booted !== true) {
           await ensureAndroidReady(host, device, { headless: false }, signal);
         }
-        const packageName = await host.androidDeployment.resolveAppPackage(device, input.app);
+        const packageName = appHint
+          ? await host.androidDeployment.resolveAppPackage(device, appHint)
+          : artifact?.packageName;
+        if (!packageName) {
+          throw new AppError(
+            'INVALID_ARGS',
+            'Could not determine the app package from the replacement artifact',
+          );
+        }
         await uninstallAndroidPackage(host, device, packageName, signal);
         artifact ??= await host.androidDeployment.prepareArtifact(
           { source: { kind: 'path', path: input.appPath } },

@@ -12,18 +12,20 @@ import { asAppError } from '@agent-device/kernel/errors';
 import { ANDROID_EMULATOR } from '../../../__tests__/test-utils/device-fixtures.ts';
 import {
   isolatedDeviceClaimStores,
+  currentTestDeviceClaimRoot,
+  inspectTestDeviceClaims as inspectDeviceClaims,
   retainOrphanedDeviceClaims,
 } from '../../../__tests__/test-utils/device-claim-store.ts';
 import { createDeviceClaimAdmission } from '../device-claim-admission.ts';
 import { acquireAllocatorHeldDeviceClaim } from '../device-claim-allocator.ts';
 import { abandonDeviceClaim, acquireDeviceClaim } from '../device-claims.ts';
-import { inspectDeviceClaims } from '../device-claim-inspection.ts';
 import { canonicalLocalDeviceKey, resolveDeviceClaimPath } from '../device-claim-paths.ts';
 import { createRequestExecutionScope } from '../../request-execution-scope.ts';
 import { LeaseRegistry } from '../../lease-registry.ts';
 import { SessionStore } from '../../session-store.ts';
 import { unavailableDeviceRuntimeGateway } from '../../__tests__/test-device-runtime-gateway.ts';
 import type { DeviceClaimPolicy } from '@agent-device/command-registry/types';
+import type { SessionState } from '../../session-state.ts';
 
 const setup = isolatedDeviceClaimStores('agent-device-claim-admission-');
 const localAndroid = localRuntimeOwner('android');
@@ -39,13 +41,21 @@ const MANAGED_BINDING: DeviceBindingIntent = {
   }),
 };
 
-function makeAdmission(policy: DeviceClaimPolicy, stateDir: string, command = 'made-up-command') {
+function makeAdmission(
+  policy: DeviceClaimPolicy,
+  stateDir: string,
+  command = 'made-up-command',
+  session?: SessionState,
+) {
   return createDeviceClaimAdmission({
     policy,
     command,
+    sessionName: 'default',
     workspace: '/worktrees/current',
     stateDir,
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
+    resolveSession: () => session,
   });
 }
 
@@ -68,7 +78,7 @@ const POLICY_CLAIMS: [DeviceClaimPolicy, string[]][] = [
 test.for(POLICY_CLAIMS)(
   'the %s policy reaches the claim store only when transient-exclusive',
   async ([policy, held], { expect }) => {
-    const { stateDir, claimsDir } = setup();
+    const { stateDir } = setup();
     const admission = makeAdmission(policy, stateDir);
 
     await admission.admit(ANDROID_EMULATOR, localAndroid, ORDINARY);
@@ -76,8 +86,6 @@ test.for(POLICY_CLAIMS)(
 
     await admission[Symbol.asyncDispose]();
     expect(inspectDeviceClaims({})).toEqual([]);
-    // A claim-free policy never even creates the store.
-    if (held.length === 0) expect(fs.existsSync(claimsDir)).toBe(false);
   },
 );
 
@@ -90,6 +98,7 @@ test('a foreign live claim refuses the command before it can reach device operat
     session: 'owner-session',
     workspace: '/worktrees/foreign',
     stateDir: ownerStateDir,
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
   });
 
@@ -112,27 +121,33 @@ test('a foreign live claim refuses the command before it can reach device operat
   expect(claimedSessions()).toEqual(['owner-session']);
 });
 
-test('a claim already held by this daemon covers the command instead of colliding with it', async () => {
+test('a sessionless command cannot borrow another session claim from the same daemon', async () => {
   const { stateDir } = setup();
   await acquireDeviceClaim({
     device: ANDROID_EMULATOR,
     session: 'open-session',
     workspace: '/worktrees/current',
     stateDir,
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
   });
 
   const admission = makeAdmission('transient-exclusive', stateDir, 'install');
-  await admission.admit(ANDROID_EMULATOR, localAndroid, ORDINARY);
+  const error = asAppError(
+    await admission
+      .admit(ANDROID_EMULATOR, localAndroid, ORDINARY)
+      .catch((error: unknown) => error),
+  );
   await admission[Symbol.asyncDispose]();
 
-  // The session claim is untouched: the command neither replaced nor released it.
+  expect(error.code).toBe('DEVICE_IN_USE');
   expect(claimedSessions()).toEqual(['open-session']);
 });
 
 test("an abandoned claim becomes this command's own transient claim and is released", async () => {
   const { stateDir } = setup();
   const aborted = await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     session: 'aborted-open',
     workspace: '/worktrees/current',
@@ -141,7 +156,9 @@ test("an abandoned claim becomes this command's own transient claim and is relea
   });
   expect(aborted.status).toBe('acquired');
   if (aborted.status !== 'acquired') return;
-  expect(await abandonDeviceClaim(aborted.ownership)).toBe('abandoned');
+  expect(await abandonDeviceClaim(aborted.ownership, currentTestDeviceClaimRoot())).toBe(
+    'abandoned',
+  );
 
   const admission = makeAdmission('transient-exclusive', stateDir, 'install');
   await admission.admit(ANDROID_EMULATOR, localAndroid, ORDINARY);
@@ -152,18 +169,45 @@ test("an abandoned claim becomes this command's own transient claim and is relea
   expect(inspectDeviceClaims({})).toEqual([]);
 });
 
+test('a command bound to the exact session verifies and preserves its claim', async () => {
+  const { stateDir } = setup();
+  const acquired = await acquireDeviceClaim({
+    device: ANDROID_EMULATOR,
+    session: 'default',
+    workspace: '/worktrees/current',
+    stateDir,
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
+    reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
+  });
+  expect(acquired.status).toBe('acquired');
+  if (acquired.status !== 'acquired') return;
+  const session: SessionState = {
+    name: 'default',
+    device: ANDROID_EMULATOR,
+    deviceClaim: acquired.ownership,
+    createdAt: Date.now(),
+    actions: [],
+  };
+
+  const admission = makeAdmission('transient-exclusive', stateDir, 'install', session);
+  await admission.admit(ANDROID_EMULATOR, localAndroid, ORDINARY);
+  await admission[Symbol.asyncDispose]();
+
+  expect(claimedSessions()).toEqual(['default']);
+});
+
 test('a provider-owned device takes no host-local claim', async () => {
-  const { stateDir, claimsDir } = setup();
+  const { stateDir } = setup();
   const admission = makeAdmission('transient-exclusive', stateDir);
 
   await admission.admit(ANDROID_EMULATOR, providerRuntimeOwner('limrun', 'instance-1'), ORDINARY);
   await admission[Symbol.asyncDispose]();
 
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(inspectDeviceClaims({})).toEqual([]);
 });
 
 test('a managed local owner is refused allocator-claim-missing under a managed binding fence and never takes a transient claim', async () => {
-  const { stateDir, claimsDir } = setup();
+  const { stateDir } = setup();
   const admission = makeAdmission('transient-exclusive', stateDir, 'shutdown');
 
   const error = asAppError(
@@ -178,13 +222,13 @@ test('a managed local owner is refused allocator-claim-missing under a managed b
   expect(error.details?.owner).toBe('managed:["sim-a"]');
   expect(error.details?.hint).toMatch(/allocator-held claim/);
   // The verifier never reaches for the store: nothing to acquire, nothing to give back.
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(inspectDeviceClaims({})).toEqual([]);
   await admission[Symbol.asyncDispose]();
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(inspectDeviceClaims({})).toEqual([]);
 });
 
 test('a managed local owner bound without a managed binding fence is refused as a contract violation', async () => {
-  const { stateDir, claimsDir } = setup();
+  const { stateDir } = setup();
   const admission = makeAdmission('transient-exclusive', stateDir, 'shutdown');
 
   const error = asAppError(
@@ -195,7 +239,7 @@ test('a managed local owner bound without a managed binding fence is refused as 
 
   expect(error.code).toBe('COMMAND_FAILED');
   expect(error.details?.reason).toBe('runtime-contract-invalid');
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(inspectDeviceClaims({})).toEqual([]);
   await admission[Symbol.asyncDispose]();
 });
 
@@ -205,7 +249,7 @@ test('a managed local owner bound without a managed binding fence is refused as 
 test.for(POLICY_CLAIMS.map(([policy]) => policy))(
   'the device-claim rule is evaluated under the %s policy: managed local owners are verified, provider owners never claim',
   async (policy, { expect }) => {
-    const { stateDir, claimsDir } = setup();
+    const { stateDir } = setup();
     const admission = makeAdmission(policy, stateDir);
 
     const error = asAppError(
@@ -218,13 +262,14 @@ test.for(POLICY_CLAIMS.map(([policy]) => policy))(
 
     await admission.admit(ANDROID_EMULATOR, providerRuntimeOwner('limrun', 'instance-1'), ORDINARY);
     await admission[Symbol.asyncDispose]();
-    expect(fs.existsSync(claimsDir)).toBe(false);
+    expect(inspectDeviceClaims({})).toEqual([]);
   },
 );
 
 test('a transient-exclusive command executes under the allocator-held claim, acquires nothing and clears nothing', async () => {
   const { stateDir, claimsDir } = setup();
   await acquireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     principal: { stateDir, instanceId: 'sim-a', identityIncarnationId: 'incarnation-1' },
   });
@@ -247,6 +292,7 @@ test('a transient-exclusive command executes under the allocator-held claim, acq
 test('an allocator-held claim of another installation refuses the managed binding as DEVICE_CLAIM_ALLOCATOR_HELD', async () => {
   const { root, stateDir } = setup();
   await acquireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     principal: {
       stateDir: path.join(root, 'foreign-installation'),
@@ -271,6 +317,7 @@ test('an allocator-held claim of another installation refuses the managed bindin
 test('a managed binding fencing another identity incarnation is refused as stale, not covered', async () => {
   const { stateDir } = setup();
   await acquireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     principal: { stateDir, instanceId: 'sim-a', identityIncarnationId: 'incarnation-1' },
   });
@@ -303,6 +350,7 @@ test.for(POLICY_CLAIMS.map(([policy]) => policy).filter((policy) => policy !== '
   async (policy, { expect }) => {
     const { stateDir, claimsDir } = setup();
     await acquireAllocatorHeldDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: ANDROID_EMULATOR,
       principal: { stateDir, instanceId: 'sim-a', identityIncarnationId: 'incarnation-1' },
     });
@@ -327,10 +375,10 @@ test.for(POLICY_CLAIMS.map(([policy]) => policy).filter((policy) => policy !== '
 // record either: it must refuse ordinary admission, not fall through as if the device were free.
 test('an ordinary owner is refused for a corrupted allocator-looking claim record, not waved through', async () => {
   const { stateDir, claimsDir } = setup();
-  fs.mkdirSync(claimsDir, { recursive: true });
+  fs.mkdirSync(claimsDir, { recursive: true, mode: 0o700 });
   const deviceKey = canonicalLocalDeviceKey(ANDROID_EMULATOR);
   fs.writeFileSync(
-    resolveDeviceClaimPath(deviceKey),
+    resolveDeviceClaimPath(deviceKey, currentTestDeviceClaimRoot()),
     JSON.stringify({
       schemaVersion: 3,
       kind: 'allocator',
@@ -367,6 +415,7 @@ test('an ordinary owner is refused for a corrupted allocator-looking claim recor
 test('the none policy still reaches no device state at all', async () => {
   const { stateDir, claimsDir } = setup();
   await acquireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     principal: { stateDir, instanceId: 'sim-a', identityIncarnationId: 'incarnation-1' },
   });
@@ -411,3 +460,60 @@ test('the request scope claims only for commands whose descriptor declares trans
   expect(await claimsWhileBound('snapshot', stateDir)).toEqual([]);
   expect(inspectDeviceClaims({})).toEqual([]);
 });
+
+test.each(['prepare', 'app_container_write_json'])(
+  '%s requires the exact named session claim and refuses a sessionless borrower',
+  async (command) => {
+    const { stateDir } = setup();
+    const sessionStore = new SessionStore(path.join(stateDir, 'sessions'));
+    const acquired = await acquireDeviceClaim({
+      device: ANDROID_EMULATOR,
+      session: 'qa-case',
+      workspace: '/worktrees/current',
+      stateDir,
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
+      reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
+    });
+    expect(acquired.status).toBe('acquired');
+    if (acquired.status !== 'acquired') return;
+    sessionStore.set('qa-case', {
+      name: 'qa-case',
+      device: ANDROID_EMULATOR,
+      deviceClaim: { ...acquired.ownership, reservationPhase: 'reserved' },
+      createdAt: Date.now(),
+      actions: [],
+    });
+
+    const ownedScope = await createRequestExecutionScope({
+      req: { token: 't', session: 'qa-case', command, positionals: [], flags: {} },
+      sessionStore,
+      leaseRegistry: new LeaseRegistry(),
+      deviceRuntimeGateway: unavailableDeviceRuntimeGateway,
+      platformRequestScope: {
+        signal: new AbortController().signal,
+        diagnostics: { emit: () => {} },
+        progress: { report: () => {} },
+      },
+    });
+    await ownedScope.bindDevice(ANDROID_EMULATOR, { required: [], preferred: [] });
+    await ownedScope[Symbol.asyncDispose]();
+    expect(claimedSessions()).toEqual(['qa-case']);
+
+    const borrowerScope = await createRequestExecutionScope({
+      req: { token: 't', session: 'other', command, positionals: [], flags: {} },
+      sessionStore,
+      leaseRegistry: new LeaseRegistry(),
+      deviceRuntimeGateway: unavailableDeviceRuntimeGateway,
+      platformRequestScope: {
+        signal: new AbortController().signal,
+        diagnostics: { emit: () => {} },
+        progress: { report: () => {} },
+      },
+    });
+    await expect(
+      borrowerScope.bindDevice(ANDROID_EMULATOR, { required: [], preferred: [] }),
+    ).rejects.toMatchObject({ code: 'DEVICE_IN_USE' });
+    await borrowerScope[Symbol.asyncDispose]();
+    expect(claimedSessions()).toEqual(['qa-case']);
+  },
+);

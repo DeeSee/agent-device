@@ -8,7 +8,8 @@ import {
 } from '@agent-device/host-kit/process';
 
 import { isSupersededDaemonOwner } from '../daemon-registration.ts';
-import { resolveDeviceClaimRoot } from './device-claim-paths.ts';
+import { isDeviceClaimFileNameForRoot } from './device-claim-paths.ts';
+import { assertDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
 import {
   decodeStoredDeviceClaim,
   isAllocatorHeldDeviceClaim,
@@ -66,23 +67,29 @@ export type DeviceClaimSelectors = {
   serial?: string;
 };
 
-export function inspectDeviceClaims(selectors: DeviceClaimSelectors): InspectedDeviceClaim[] {
-  const root = resolveDeviceClaimRoot();
-  const listed = readClaimEntries(root);
+export function inspectDeviceClaims(
+  selectors: DeviceClaimSelectors,
+  deviceClaimRoot: DeviceClaimRoot,
+): InspectedDeviceClaim[] {
+  assertDeviceClaimRoot(deviceClaimRoot);
+  const listed = readClaimEntries(deviceClaimRoot.path);
+  assertDeviceClaimRoot(deviceClaimRoot);
   if ('claims' in listed) return listed.claims;
   const parsed = listed.entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-    .map((entry) => readDeviceClaimFile(path.join(root, entry.name)))
+    .filter((entry) => entry.isFile() && isDeviceClaimFileNameForRoot(entry.name, deviceClaimRoot))
+    .map((entry) => readDeviceClaimFile(path.join(deviceClaimRoot.path, entry.name)))
     .filter((entry): entry is InspectedDeviceClaim => entry !== null)
     .filter((entry) => matchesClaimSelectors(entry.claim ?? entry.allocatorClaim, selectors));
   const observations = readHostProcessIdentityObservations(
     parsed.flatMap((entry) => (entry.claim ? [entry.claim.ownerPid] : [])),
   );
-  return parsed.map((entry) =>
+  const result = parsed.map((entry) =>
     entry.claim
       ? classifyInspectedClaim(entry, observations.get(entry.claim.ownerPid) ?? null)
       : entry,
   );
+  assertDeviceClaimRoot(deviceClaimRoot);
+  return result;
 }
 
 function readClaimEntries(

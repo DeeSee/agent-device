@@ -50,12 +50,27 @@ export type PushNotificationResult = Readonly<{
   extrasCount?: number;
 }>;
 
+export type AppContainerWriteJsonInput = Readonly<{
+  app: string;
+  containerPath: string;
+  value: JsonObject;
+}>;
+
+export type AppContainerWriteJsonResult = Readonly<{
+  appId: string;
+  containerPath: string;
+  sha256: string;
+  byteLength: number;
+  verified: true;
+}>;
+
 /** The request-scoped deployment facet; no operation creates a durable resource. */
 export type AppDeploymentRuntimeOperations = Readonly<{
   deployApp(input: AppDeploymentInput): Promise<AppDeploymentResult>;
   materializeAppSource(input: MaterializeAppSourceInput): Promise<MaterializedAppSource>;
   deployMaterializedApp(input: DeployMaterializedAppInput): Promise<AppDeploymentResult>;
   sendPushNotification(input: PushNotificationInput): Promise<PushNotificationResult>;
+  writeAppContainerJson(input: AppContainerWriteJsonInput): Promise<AppContainerWriteJsonResult>;
 }>;
 
 /**
@@ -73,6 +88,15 @@ export type AppleAppDeploymentExecutor = Readonly<{
     options: Readonly<{ appIdentifierHint?: string; signal: AbortSignal }>,
   ): Promise<MaterializedAppSource>;
   resolveAppBundleId(device: DeviceInfo, app: string): Promise<string>;
+  writeAppContainerJson(
+    device: DeviceInfo,
+    input: Readonly<{
+      appId: string;
+      containerPath: string;
+      serializedValue: string;
+    }>,
+    signal: AbortSignal,
+  ): Promise<Readonly<{ sha256: string; byteLength: number }>>;
 }>;
 
 /**

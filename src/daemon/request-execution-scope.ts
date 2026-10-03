@@ -75,6 +75,7 @@ import {
 } from './daemon-policy.ts';
 import type { DaemonPolicy } from '../daemon-policy-file.ts';
 import { requestDispatchLedger, type RequestDispatchLedger } from './request-dispatch-ledger.ts';
+import type { DeviceClaimRoot } from '../device-claim-root.ts';
 
 // Production daemon wiring owns one LeaseRegistry per process; scoping locks by registry keeps
 // test and embedded routers isolated without changing process-level serialization there.
@@ -221,8 +222,11 @@ export async function createRequestExecutionScope(params: {
     const { claimAdmission, runtimeBindings } = createRequestDeviceAccess({
       command,
       dispatchLedger,
+      sessionName,
+      sessionStore,
       workspace: scopedReq.meta?.cwd ?? process.cwd(),
       stateDir: sessionStore.resolveDaemonStateDir(),
+      deviceClaimRoot: sessionStore.resolveDeviceClaimRoot(),
       deviceRuntimeGateway: params.deviceRuntimeGateway,
       platformRequestScope: params.platformRequestScope,
       daemonPolicy: params.daemonPolicy,
@@ -375,8 +379,11 @@ export async function createRequestExecutionScope(params: {
 function createRequestDeviceAccess(params: {
   command: string;
   dispatchLedger: RequestDispatchLedger;
+  sessionName: string;
+  sessionStore: SessionStore;
   workspace: string;
   stateDir: string;
+  deviceClaimRoot: DeviceClaimRoot;
   deviceRuntimeGateway: DeviceRuntimeGateway<PlatformRuntimeOperations> | undefined;
   platformRequestScope: PlatformRequestScope | undefined;
   daemonPolicy: DaemonPolicy | undefined;
@@ -391,9 +398,12 @@ function createRequestDeviceAccess(params: {
   const claimAdmission = createDeviceClaimAdmission({
     policy: resolveCommandDeviceClaimPolicy(params.command),
     command: params.command,
+    sessionName: params.sessionName,
     workspace: params.workspace,
     stateDir: params.stateDir,
     reconcileOrphanedDeviceClaim: createOwnerScopedDeviceClaimReconciler(platformRequestScope),
+    deviceClaimRoot: params.deviceClaimRoot,
+    resolveSession: () => params.sessionStore.get(params.sessionName),
   });
   return {
     claimAdmission,
@@ -518,6 +528,42 @@ export async function prepareLockedRequestScope(params: {
     return finalized;
   };
   requestScopeFinalizers.set(scope, finalize);
+
+  if (existingSession?.closeRecovery?.state === 'retry-required' && scope.command !== 'close') {
+    return {
+      type: 'response',
+      response: {
+        ok: false,
+        error: {
+          code: 'COMMAND_FAILED',
+          message: `Session "${scope.sessionName}" has incomplete teardown`,
+          hint: `Retry the same close command with the same session name, target, and flags: ${scope.sessionName}`,
+          details: {
+            reason: 'session_close_retry_required',
+            session: scope.sessionName,
+          },
+        },
+      },
+    };
+  }
+
+  if (existingSession?.deviceClaim?.reservationPhase === 'opening' && scope.command !== 'close') {
+    return {
+      type: 'response',
+      response: {
+        ok: false,
+        error: {
+          code: 'COMMAND_FAILED',
+          message: `Session "${scope.sessionName}" has an unconfirmed application launch`,
+          hint: `Close session "${scope.sessionName}" to reconcile it before retrying.`,
+          details: {
+            reason: 'session_open_recovery_required',
+            session: scope.sessionName,
+          },
+        },
+      },
+    };
+  }
 
   const recordingInvalidatedReason =
     existingSession?.screenRecording?.handle.inspect().invalidatedReason;

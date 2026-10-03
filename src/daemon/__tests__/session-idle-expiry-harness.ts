@@ -1,3 +1,10 @@
+import { deviceClaimBindingId } from '../../device-claim-root.ts';
+import {
+  currentTestDeviceClaimRoot,
+  isolatedDeviceClaimStores,
+  retainOrphanedDeviceClaims,
+  type IsolatedDeviceClaimStore,
+} from '../../__tests__/test-utils/device-claim-store.ts';
 import { afterEach, assert } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,11 +12,6 @@ import { SessionStore } from '../session-store.ts';
 import type { SessionState } from '../session-state.ts';
 import type { createSessionIdleExpiry } from '../server/daemon-session-idle-expiry.ts';
 import { makeIosSession } from '../../__tests__/test-utils/session-factories.ts';
-import {
-  isolatedDeviceClaimStores,
-  retainOrphanedDeviceClaims,
-  type IsolatedDeviceClaimStore,
-} from '../../__tests__/test-utils/device-claim-store.ts';
 import { acquireDeviceClaim, type DeviceClaimSessionOwnership } from '../device/device-claims.ts';
 import { resolveDeviceClaimPath } from '../device/device-claim-paths.ts';
 import { IOS_SIMULATOR } from '../../__tests__/test-utils/device-fixtures.ts';
@@ -26,6 +28,8 @@ export const NOW = Date.now();
 
 /** A claim-shaped record for a session that only needs to be HOLDING something. */
 export const CLAIM = Object.freeze({
+  claimRootId: currentTestDeviceClaimRoot().id,
+  claimBindingId: deviceClaimBindingId(currentTestDeviceClaimRoot(), 'ios:sim-1', 'token-1'),
   deviceKey: 'ios:sim-1',
   ownerToken: 'token-1',
   ownerPid: 4242,
@@ -123,6 +127,7 @@ export function createIdleExpiryHarness(): Readonly<{
     sessionWithLiveClaim: async (fixture, name = 'default') => {
       const { stateDir } = fixture.claims;
       const acquired = await acquireDeviceClaim({
+        deviceClaimRoot: currentTestDeviceClaimRoot(),
         device: IOS_SIMULATOR,
         session: name,
         workspace: stateDir,
@@ -139,7 +144,8 @@ export function createIdleExpiryHarness(): Readonly<{
       fixture.sessionStore.set(name, session);
       return { session, deviceClaim: acquired.ownership };
     },
-    claimFileHeld: (deviceClaim) => fs.existsSync(resolveDeviceClaimPath(deviceClaim.deviceKey)),
+    claimFileHeld: (deviceClaim) =>
+      fs.existsSync(resolveDeviceClaimPath(deviceClaim.deviceKey, currentTestDeviceClaimRoot())),
     runUntilIdle: (controller, ms) => {
       controller.noteSessionsChanged();
       return new Promise((resolve) => setTimeout(resolve, ms));

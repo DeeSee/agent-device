@@ -4,7 +4,7 @@ import type {
   DaemonResponse as SharedDaemonResponse,
 } from '../daemon/daemon-request.ts';
 import type { AgentDeviceDaemonTransportContext } from '@agent-device/contracts/client';
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
 import {
   createRequestId,
   emitDiagnostic,
@@ -21,13 +21,15 @@ import {
   attachActiveSessionAddressHint,
   attachRepairSessionAddressHint,
   cleanupDaemonAfterRequest,
-  ensureDaemon,
   isActiveReplaySessionResponse,
   isHeldRepairDivergence,
+} from './daemon-client-replay.ts';
+import { ensureDaemon } from './daemon-client-lifecycle.ts';
+import {
   resolveClientSettings,
   type DaemonClientSettings,
   type EnsuredDaemon,
-} from './daemon-client-lifecycle.ts';
+} from './daemon-client-settings.ts';
 import { sendRequest } from './daemon-client-transport.ts';
 import { isRemoteDaemon, type DaemonInfo } from './daemon-client-metadata.ts';
 import { leaseScopeFromRequest } from '@agent-device/contracts/lease-scope';
@@ -43,6 +45,7 @@ export async function sendToDaemon(
   options: DaemonTransportOptions = {},
 ): Promise<DaemonResponse> {
   const requestId = req.meta?.requestId ?? createRequestId();
+  throwIfRequestAborted(options.signal, requestId);
   const debug = Boolean(req.meta?.debug || req.flags?.verbose);
   // A few internal callers build DaemonRequest directly instead of using the
   // public client flag builder. Defend this transport boundary too: credentials
@@ -55,22 +58,32 @@ export async function sendToDaemon(
   const settings = resolveClientSettings(
     requestWithoutAuthFlag,
     options.authToken ?? flagAuthToken,
+    options.deviceClaimsDir,
+    options.deviceClaimsDirExplicit,
+    options.daemonBaseUrlPolicy,
   );
   const requestTimeoutMs = resolveCommandRequestTimeoutMs(
     resolveCommandTimeoutPolicy(requestWithoutAuthFlag.command),
     requestWithoutAuthFlag,
   );
+  throwIfRequestAborted(options.signal, requestId);
   const daemon = await withDiagnosticTimer(
     'daemon_startup',
-    async () => await ensureDaemon(settings),
+    async () => await ensureDaemon(settings, options.signal),
     { requestId, session: req.session },
   );
+  throwIfRequestAborted(options.signal, requestId);
   const info = daemon.info;
   const preparedRemoteRequest = await protectArtifactUploadWithLeaseBeats(
     info,
     settings,
     requestWithoutAuthFlag,
-  );
+    options.signal,
+  ).catch((error: unknown) => {
+    throwIfRequestAborted(options.signal, requestId);
+    throw error;
+  });
+  throwIfRequestAborted(options.signal, requestId);
   writeInstallInProgressNotice(requestWithoutAuthFlag.command);
 
   const request = buildTransportRequest(
@@ -103,7 +116,10 @@ export async function sendToDaemon(
             settings.transportPreference,
             settings.paths,
             requestTimeoutMs,
-            { onProgress: options.onProgress },
+            {
+              ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            },
           ),
         { requestId, command: req.command },
       );
@@ -114,6 +130,10 @@ export async function sendToDaemon(
       );
     },
   );
+}
+
+function throwIfRequestAborted(signal: AbortSignal | undefined, requestId: string): void {
+  if (signal?.aborted) throw createRequestCanceledError({ requestId });
 }
 
 function buildTransportRequest(
@@ -316,15 +336,25 @@ async function protectArtifactUploadWithLeaseBeats(
   info: DaemonInfo,
   settings: DaemonClientSettings,
   request: Omit<DaemonRequest, 'token'>,
+  signal?: AbortSignal,
 ): Promise<PreparedRemoteRequest> {
   const leaseScope = leaseScopeFromRequest(request);
   if (!isRemoteDaemon(info) || !leaseScope.leaseId) {
-    return await prepareRemoteRequestArtifacts(request, info, new AbortController().signal);
+    return await prepareRemoteRequestArtifacts(
+      request,
+      info,
+      signal ?? new AbortController().signal,
+    );
   }
   const { buildUploadLeaseHeartbeat, runProtectedLeaseWork } =
     await import('./daemon-client-lease-beat.ts');
   return await runProtectedLeaseWork({
     heartbeat: buildUploadLeaseHeartbeat(info, settings, request),
-    task: (signal) => prepareRemoteRequestArtifacts(request, info, signal),
+    task: (leaseSignal) =>
+      prepareRemoteRequestArtifacts(
+        request,
+        info,
+        signal ? AbortSignal.any([signal, leaseSignal]) : leaseSignal,
+      ),
   });
 }

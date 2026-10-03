@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { inspectDeviceClaims } from '../device/device-claim-inspection.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 
@@ -47,7 +48,7 @@ export function openRequest(
 }
 
 export function storedClaimUpdatedAt(device: DeviceInfo): number {
-  const claim = inspectDeviceClaims({ udid: device.id })[0]?.claim;
+  const claim = inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim;
   if (claim?.updatedAtMs === undefined) {
     throw new Error(`no device claim is stored for ${device.id}`);
   }

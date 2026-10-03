@@ -461,7 +461,7 @@ async function settleExpiredSession(params: {
   const deviceKey = session.deviceClaim?.deviceKey;
   const identity = { session: sessionName, idleExpiryMs, ...(deviceKey ? { deviceKey } : {}) };
   if (!(await releaseExpiredSessionResources(params, identity))) return undefined;
-  const claim = await clearExpiredClaim(sessionName, session.deviceClaim);
+  const claim = await clearExpiredClaim(sessionName, session.deviceClaim, params.sessionStore);
   if (claim === CLAIM_CLEAR_FAILED || !CLAIM_GONE[claim]) {
     emitDiagnostic({
       level: 'warn',
@@ -554,10 +554,11 @@ async function releaseExpiredSessionResources(
 async function clearExpiredClaim(
   sessionName: string,
   ownership: SessionState['deviceClaim'],
+  sessionStore: SessionStore,
 ): Promise<DeviceClaimClearOutcome | typeof CLAIM_CLEAR_FAILED> {
   if (!ownership) return 'absent';
   try {
-    return await clearDeviceClaim(ownership);
+    return await clearDeviceClaim(ownership, sessionStore.resolveDeviceClaimRoot());
   } catch (error) {
     emitDiagnostic({
       level: 'warn',

@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import { acquireDeviceClaim } from '../device/device-claims.ts';
 import { canonicalLocalDeviceKey } from '../device/device-claim-paths.ts';
 import { createDurableCaptureResourceStore } from '@agent-device/capture-kit/durable-capture';
-import { writeDaemonShutdownReport } from '../daemon-shutdown-report.ts';
+import { writeDaemonShutdownReport } from '../../daemon-shutdown-report.ts';
 import { SessionScriptWriter, type SessionScriptWriteResult } from '../session-script-writer.ts';
 import { SessionStore } from '../session-store.ts';
 import {
@@ -97,6 +98,7 @@ function createDeviceClaimFixture(root: string): FilesystemBoundaryFixture {
     targetPath: claimPath,
     run: async () =>
       acquireDeviceClaim({
+        deviceClaimRoot: currentTestDeviceClaimRoot(),
         device,
         session: 'filesystem-fault',
         workspace: process.cwd(),
@@ -137,6 +139,13 @@ function createShutdownReportFixture(root: string): FilesystemBoundaryFixture {
     targetPath: path.join(root, 'daemon-shutdown.json'),
     run: async () =>
       writeDaemonShutdownReport(root, {
+        daemon: {
+          pid: process.pid,
+          processStartTime: 'test-start',
+          version: 'test',
+          codeSignature: 'test',
+          deviceClaimRootId: 'test-root',
+        },
         providerReleases: { released: [], pending: [] },
         claims: { released: [], orphaned: [], superseded: [], unattributable: [] },
       }),

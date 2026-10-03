@@ -419,6 +419,7 @@ function sourceRuntimeFacts(
       providerMode: options.providerMode ?? 'local',
     },
     operations: {
+      writeAppContainerJson: unavailable,
       ...unavailableApplicationLifecycleOperationFacts,
       appLogInspect: unavailable,
       appLogDoctor: unavailable,

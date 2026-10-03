@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import type { OwnerIdentity } from '@agent-device/host-kit/process';
 import { publishFileSync } from '@agent-device/host-kit/file';
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
-import { isAgentDeviceDaemonProcess } from '../../daemon-process.ts';
+import { inspectAgentDeviceDaemonProcess } from '../../daemon-process.ts';
+import { tryAcquireDaemonLockMutationGuard } from '../../daemon-lock-mutation.ts';
 import { readRegisteredDaemonOwnership } from '../daemon-registration.ts';
 
 export { readVersion } from '@agent-device/host-kit/version';
@@ -22,6 +23,7 @@ export type DaemonLockInfo = {
 export function writeInfo(
   baseDir: string,
   infoPath: string,
+  lockPath: string,
   logPath: string,
   opts: {
     socketPort?: number;
@@ -32,42 +34,59 @@ export function writeInfo(
     codeSignature: string;
     processStartTime: string | undefined;
     policyDigest?: string;
+    deviceClaimRootId: string;
   },
 ): void {
   if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
-  fs.writeFileSync(logPath, '');
-  const transport = opts.socketPort && opts.httpPort ? 'dual' : opts.httpPort ? 'http' : 'socket';
-  // Published through a same-directory temp sibling: a client that reads `daemon.json` while this
-  // daemon is starting either sees the previous record or this one, never a half-written file it
-  // would have to decode as naming no owner.
-  publishFileSync({
-    destination: infoPath,
-    contents: JSON.stringify(
-      {
-        port: opts.socketPort,
-        httpPort: opts.httpPort,
-        transport,
-        token: opts.token,
-        pid: process.pid,
-        version: opts.version,
-        codeOrigin: opts.codeOrigin,
-        codeSignature: opts.codeSignature,
-        processStartTime: opts.processStartTime,
-        policyDigest: opts.policyDigest,
-        stateDir: baseDir,
-      },
-      null,
-      2,
-    ),
-    mode: 0o600,
-  });
+  const releaseMutation = tryAcquireDaemonLockMutationGuard(lockPath);
+  if (!releaseMutation) throw new Error('Daemon metadata mutation is owned by another process');
+  try {
+    const lock = readLockInfo(lockPath);
+    if (
+      !lock ||
+      lock.pid !== process.pid ||
+      !opts.processStartTime ||
+      lock.processStartTime !== opts.processStartTime
+    ) {
+      throw new Error('Daemon lock ownership changed before info publication');
+    }
+    fs.writeFileSync(logPath, '');
+    const transport = opts.socketPort && opts.httpPort ? 'dual' : opts.httpPort ? 'http' : 'socket';
+    // Published through a same-directory temp sibling: a client that reads `daemon.json` while this
+    // daemon is starting either sees the previous record or this one, never a half-written file it
+    // would have to decode as naming no owner.
+    publishFileSync({
+      destination: infoPath,
+      contents: JSON.stringify(
+        {
+          port: opts.socketPort,
+          httpPort: opts.httpPort,
+          transport,
+          token: opts.token,
+          pid: process.pid,
+          version: opts.version,
+          codeOrigin: opts.codeOrigin,
+          codeSignature: opts.codeSignature,
+          processStartTime: opts.processStartTime,
+          policyDigest: opts.policyDigest,
+          deviceClaimRootId: opts.deviceClaimRootId,
+          stateDir: baseDir,
+        },
+        null,
+        2,
+      ),
+      mode: 0o600,
+    });
+  } finally {
+    releaseMutation();
+  }
 }
 
 export type InfoRemoval =
   | Readonly<{ removed: true }>
   | Readonly<{
       removed: false;
-      reason: 'replaced' | 'unproven' | 'absent' | 'unreadable' | 'ownerless';
+      reason: 'replaced' | 'unproven' | 'absent' | 'unreadable' | 'ownerless' | 'mutation_busy';
       registeredPid?: number;
     }>;
 
@@ -82,28 +101,32 @@ export type InfoRemoval =
  * time. Keeping such a record leaves a client to find a dead pid, which its own liveness check
  * already recovers from; removing one that belongs to a successor is the unrecoverable direction.
  *
- * The read and the unlink are not one atomic step, and there is no check-and-delete primitive to make
- * them one. What closes the gap is the daemon lock the caller still holds: a successor can only reach
- * `writeInfo` after {@link acquireDaemonLock} steals it, and stealing it requires
- * `isAgentDeviceDaemonProcess` to prove the holder dead — which this process running this line is not.
- * The premise is therefore that nothing removed the lock out from under us, and #3105 records the one
- * path that currently breaks it by clearing the lock without proving ownership.
  */
-export function removeInfoOwnedBy(infoPath: string, owner: OwnerIdentity): InfoRemoval {
-  const ownership = readRegisteredDaemonOwnership(infoPath, owner);
-  if (ownership.state !== 'match') {
-    return {
-      removed: false,
-      reason: ownership.state,
-      ...(ownership.state === 'replaced' ? { registeredPid: ownership.identity.pid } : {}),
-    };
-  }
+export function removeInfoOwnedBy(
+  infoPath: string,
+  owner: OwnerIdentity,
+  lockPath: string,
+): InfoRemoval {
+  const releaseMutation = tryAcquireDaemonLockMutationGuard(lockPath);
+  if (!releaseMutation) return { removed: false, reason: 'mutation_busy' };
   try {
-    fs.unlinkSync(infoPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const ownership = readRegisteredDaemonOwnership(infoPath, owner);
+    if (ownership.state !== 'match') {
+      return {
+        removed: false,
+        reason: ownership.state,
+        ...(ownership.state === 'replaced' ? { registeredPid: ownership.identity.pid } : {}),
+      };
+    }
+    try {
+      fs.unlinkSync(infoPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return { removed: true };
+  } finally {
+    releaseMutation();
   }
-  return { removed: true };
 }
 
 function readLockInfo(lockPath: string): DaemonLockInfo | null {
@@ -121,41 +144,50 @@ export function acquireDaemonLock(
   baseDir: string,
   lockPath: string,
   lockData: DaemonLockInfo,
+  inspectDaemonProcess: typeof inspectAgentDeviceDaemonProcess = inspectAgentDeviceDaemonProcess,
 ): boolean {
   if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
   const payload = JSON.stringify(lockData, null, 2);
+  const releaseMutation = tryAcquireDaemonLockMutationGuard(lockPath);
+  if (!releaseMutation) return false;
 
-  const tryWriteLock = (): boolean => {
-    try {
-      fs.writeFileSync(lockPath, payload, { flag: 'wx', mode: 0o600 });
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw error;
-    }
-  };
-
-  if (tryWriteLock()) return true;
-  const existing = readLockInfo(lockPath);
-  if (
-    existing?.pid &&
-    existing.pid !== process.pid &&
-    isAgentDeviceDaemonProcess(existing.pid, existing.processStartTime)
-  ) {
-    return false;
-  }
   try {
-    fs.unlinkSync(lockPath);
-  } catch {}
-  return tryWriteLock();
+    const tryWriteLock = (): boolean => {
+      try {
+        fs.writeFileSync(lockPath, payload, { flag: 'wx', mode: 0o600 });
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+        throw error;
+      }
+    };
+
+    if (tryWriteLock()) return true;
+    const existing = readLockInfo(lockPath);
+    if (!existing) return false;
+    const observation = inspectDaemonProcess(existing.pid, existing.processStartTime);
+    if (observation === 'match' || observation === 'unknown') return false;
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {}
+    return tryWriteLock();
+  } finally {
+    releaseMutation();
+  }
 }
 
 export function releaseDaemonLock(lockPath: string): void {
-  const existing = readLockInfo(lockPath);
-  if (existing && existing.pid !== process.pid) return;
+  const releaseMutation = tryAcquireDaemonLockMutationGuard(lockPath);
+  if (!releaseMutation) return;
   try {
-    if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-  } catch {}
+    const existing = readLockInfo(lockPath);
+    if (!existing || existing.pid !== process.pid) return;
+    try {
+      if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+    } catch {}
+  } finally {
+    releaseMutation();
+  }
 }
 
 export function parseIntegerEnv(raw: string | undefined): number | undefined {

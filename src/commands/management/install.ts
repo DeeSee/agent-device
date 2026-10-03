@@ -35,9 +35,9 @@ const installCommandMetadata = defineFieldCommandMetadata(
 
 const reinstallCommandMetadata = defineFieldCommandMetadata(
   'reinstall',
-  'Replace an installed app with a binary from a local path. Use this when preserving the same app identity while installing a new build on the selected device.',
+  'Replace an installed app with a binary from a local path. Omit the app identifier to derive the exact identity from the artifact before replacement.',
   {
-    app: requiredField(stringField()),
+    app: stringField('Optional app identifier hint.'),
     appPath: requiredField(stringField('Path to app binary.')),
   },
 );
@@ -61,7 +61,9 @@ const installCliSchema = {
 } as const satisfies CommandSchemaOverride;
 
 const reinstallCliSchema = {
-  positionalArgs: ['app', 'path'],
+  usageOverride: 'reinstall <path> | reinstall <app> <path>',
+  listUsageOverride: 'reinstall <path>',
+  positionalArgs: ['appOrPath', 'path?'],
 } as const satisfies CommandSchemaOverride;
 
 const installFromSourceCliSchema = {
@@ -76,7 +78,7 @@ const installFromSourceCliSchema = {
 const installCliReader: CliReader = (positionals, flags) => installInputFromCli(positionals, flags);
 
 const reinstallCliReader: CliReader = (positionals, flags) =>
-  reinstallInputFromCli(positionals, flags);
+  installInputFromCli(positionals, flags);
 
 const installFromSourceCliReader: CliReader = (positionals, flags) => ({
   ...commonInputFromFlags(flags),
@@ -90,7 +92,7 @@ const installDaemonWriter: DaemonWriter = direct(PUBLIC_COMMANDS.install, (input
 );
 
 const reinstallDaemonWriter: DaemonWriter = direct(PUBLIC_COMMANDS.reinstall, (input) =>
-  requiredPair(input.app, input.appPath),
+  installPositionals(input.app, input.appPath),
 );
 
 const installFromSourceDaemonWriter: DaemonWriter = (input) =>
@@ -156,24 +158,9 @@ function installInputFromCli(positionals: string[], flags: CliFlags): Record<str
   };
 }
 
-function reinstallInputFromCli(positionals: string[], flags: CliFlags): Record<string, unknown> {
-  return {
-    ...commonInputFromFlags(flags),
-    app: requiredString(positionals[0], 'reinstall requires app'),
-    appPath: requiredString(positionals[1], 'reinstall requires path'),
-  };
-}
-
 function installPositionals(app: unknown, appPath: unknown): string[] {
   const path = requiredDaemonString(appPath, 'missing app path');
   return typeof app === 'string' && app.length > 0 ? [app, path] : [path];
-}
-
-function requiredPair(first: unknown, second: unknown): string[] {
-  return [
-    requiredDaemonString(first, 'missing first positional'),
-    requiredDaemonString(second, 'missing second positional'),
-  ];
 }
 
 // fallow-ignore-next-line complexity

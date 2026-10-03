@@ -88,6 +88,7 @@ export async function acquireProcessLock(params: {
   pollMs?: number;
   ownerGraceMs?: number;
   description?: string;
+  signal?: AbortSignal;
 }): Promise<ProcessLockRelease> {
   const { lockDirPath, owner } = params;
   const ownerFilePath = path.join(lockDirPath, OWNER_FILE_NAME);
@@ -101,6 +102,7 @@ export async function acquireProcessLock(params: {
   const claim: ProcessLockOwnerRecord = { ...owner, claimToken, claimIssuerId: CLAIM_ISSUER_ID };
 
   while (Date.now() < deadline) {
+    params.signal?.throwIfAborted();
     try {
       fs.mkdirSync(lockDirPath);
       writeProcessLockOwner(ownerFilePath, claim);
@@ -140,7 +142,7 @@ export async function acquireProcessLock(params: {
       if (clearStaleProcessLock(lockDirPath, ownerFilePath, ownerGraceMs)) {
         continue;
       }
-      await sleep(pollMs);
+      await sleep(pollMs, params.signal);
     }
   }
 

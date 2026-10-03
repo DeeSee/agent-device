@@ -55,8 +55,12 @@ export async function hostFileStat(filePath: string): Promise<fs.Stats> {
   return await fsPromises.stat(filePath);
 }
 
-export async function writeHostTextFile(filePath: string, contents: string): Promise<void> {
-  await fsPromises.writeFile(filePath, contents, 'utf8');
+export async function writeHostTextFile(
+  filePath: string,
+  contents: string,
+  options: { flag?: 'w' | 'wx'; mode?: number; signal?: AbortSignal } = {},
+): Promise<void> {
+  await fsPromises.writeFile(filePath, contents, { encoding: 'utf8', ...options });
 }
 
 export async function writeHostBinaryFile(filePath: string, contents: Uint8Array): Promise<void> {
@@ -133,4 +137,14 @@ export function createHostDirectoryLinkSync(targetPath: string, linkPath: string
 
 export function readHostDirectorySync(directoryPath: string): string[] {
   return fs.readdirSync(directoryPath);
+}
+
+export async function resolveHostPath(filePath: string): Promise<string> {
+  return await fsPromises.realpath(filePath);
+}
+export async function hostFileLstat(filePath: string): Promise<fs.Stats> {
+  return await fsPromises.lstat(filePath);
+}
+export async function createHostDirectory(directoryPath: string): Promise<void> {
+  await fsPromises.mkdir(directoryPath);
 }

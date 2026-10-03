@@ -8,7 +8,7 @@
 // actual socket/HTTP timeout through `sendRequest` so the assertions exercise
 // the same code path a real client does.
 //
-// Why cleanup eligibility must stay unconditional for local timeouts: the
+// Why cleanup eligibility stays unconditional for ordinary local timeouts: the
 // client's declared --platform is not authoritative for session-bound
 // execution. `applyStripLockPolicy` (src/daemon/request-lock-policy.ts) lets
 // an existing session's real device platform silently override a conflicting
@@ -18,8 +18,10 @@
 // (the "rebound-session" case below), and a request with no platform at all
 // (the "unknown-session" case) is the common route the original bug misled.
 // A design that skips the pkill sweep based on the declared flag alone would
-// skip real cleanup in the rebound case — the dangerous direction. This test
-// proves the sweep always fires for local timeouts, and that the HINT text
+// skip real cleanup in the rebound case — the dangerous direction. The
+// descriptor-owned record policy is the sole deliberate exception because
+// its exact take remains recoverable. This test proves the sweep fires for
+// ordinary local timeouts, and that the HINT text
 // (not the cleanup) is what carries the platform-evidence gating.
 
 import net from 'node:net';

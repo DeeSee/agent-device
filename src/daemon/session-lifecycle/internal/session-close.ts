@@ -24,6 +24,7 @@ import type {
   BindDeviceRuntime,
   InspectDeviceRuntimeFacts,
 } from '../../request-runtime-binding.ts';
+import { assertSessionDeviceClaim } from '../../device/device-claim-authority.ts';
 import {
   buildRetriableRepairCloseFailureResponse,
   commitRepairScriptBeforeClose,
@@ -202,6 +203,9 @@ export async function handleSessionCloseCommands(
       bindDevice: params.bindDevice,
     });
   }
+  if (session.deviceClaim?.reservationPhase === 'reserved') {
+    return await closeReservedSession({ req, sessionName, session, sessionStore });
+  }
   assertTerminalRecordingCloseAllowed(req, session);
   const app = req.positionals?.[0];
   if (req.internal?.closeAppOnly === true && !app) {
@@ -267,6 +271,50 @@ export async function handleSessionCloseCommands(
   });
 }
 
+async function closeReservedSession(params: {
+  req: DaemonRequest;
+  sessionName: string;
+  session: SessionState;
+  sessionStore: SessionStore;
+}): Promise<DaemonResponse> {
+  const { req, sessionName, session, sessionStore } = params;
+  if (
+    (req.positionals?.length ?? 0) > 0 ||
+    req.flags?.shutdown === true ||
+    (req.flags?.saveScript !== undefined && req.flags.saveScript !== false) ||
+    req.internal?.closeAppOnly === true
+  ) {
+    return errorResponse(
+      'INVALID_ARGS',
+      'An unlaunched reservation can only be closed without app, shutdown, or script options.',
+    );
+  }
+  await assertSessionDeviceClaim({
+    device: session.device,
+    session: sessionName,
+    stateDir: sessionStore.resolveDaemonStateDir(),
+    ownership: session.deviceClaim,
+    deviceClaimRoot: sessionStore.resolveDeviceClaimRoot(),
+  });
+  const outcome = await clearDeviceClaim(
+    session.deviceClaim,
+    sessionStore.resolveDeviceClaimRoot(),
+  );
+  if (outcome === 'ownership-changed' || outcome === 'unattributable') {
+    sessionStore.markCloseRetryRequired(sessionName, session);
+    return errorResponse(
+      'COMMAND_FAILED',
+      `Session "${session.name}" no longer owns the claim it attempted to release.`,
+      { reason: 'device_claim_ownership_changed', session: session.name },
+    );
+  }
+  sessionStore.delete(sessionName);
+  return {
+    ok: true,
+    data: { session: session.name, ...successText(`Closed: ${session.name}`) },
+  };
+}
+
 type SessionCloseFinalization =
   | { kind: 'response'; response: DaemonResponse }
   | {
@@ -318,32 +366,57 @@ async function runCloseTeardownAndRelease(params: {
     finalizeOrdinaryCloseScript,
     platformResourceCleanup: params.platformResourceCleanup,
   });
+  const cleanupAggregate = closeCleanupError(sessionName, cleanupFailures);
+  const deviceClaimBlockingError = platformCloseError ?? cleanupAggregate;
+  if (deviceClaimBlockingError) {
+    retainCloseForRetry(sessionStore, sessionName, session);
+    throw deviceClaimBlockingError;
+  }
   const leaseRelease = await releaseProviderLeaseForClose({
     session,
     leaseRegistry,
     leaseLifecycleProvider,
   });
-  if (leaseRelease.response) return { kind: 'response', response: leaseRelease.response };
-  const cleanupAggregate = closeCleanupError(sessionName, cleanupFailures);
-  const deviceClaimBlockingError = platformCloseError ?? cleanupAggregate;
-  if (deviceClaimBlockingError) {
-    if (session.deviceClaim) {
-      emitDiagnostic({
-        level: 'warn',
-        phase: 'device_claim_close_effects_unconfirmed',
-        data: {
-          deviceKey: session.deviceClaim.deviceKey,
-          session: sessionName,
-        },
-      });
-    }
-  } else {
-    await clearDeviceClaim(session.deviceClaim);
+  if (leaseRelease.response) {
+    retainCloseForRetry(sessionStore, sessionName, session);
+    return { kind: 'response', response: leaseRelease.response };
+  }
+  try {
+    const outcome = await clearDeviceClaim(
+      session.deviceClaim,
+      sessionStore.resolveDeviceClaimRoot(),
+    );
+    if (outcome === 'unattributable')
+      throw new AppError(
+        'COMMAND_FAILED',
+        'The session device claim could not be confirmed released.',
+        { reason: 'device_claim_unattributable' },
+      );
+  } catch (error) {
+    retainCloseForRetry(sessionStore, sessionName, session);
+    throw error;
   }
   sessionStore.delete(sessionName);
-  if (deviceClaimBlockingError) throw deviceClaimBlockingError;
   if (saveScriptError) throw saveScriptError;
   return { kind: 'closed', providerData: leaseRelease.providerData, shutdownResult };
+}
+
+function retainCloseForRetry(
+  sessionStore: SessionStore,
+  sessionName: string,
+  session: SessionState,
+): void {
+  if (session.deviceClaim) {
+    emitDiagnostic({
+      level: 'warn',
+      phase: 'device_claim_close_effects_unconfirmed',
+      data: {
+        deviceKey: session.deviceClaim.deviceKey,
+        session: sessionName,
+      },
+    });
+  }
+  sessionStore.markCloseRetryRequired(sessionName, session);
 }
 
 function buildCloseSuccessResponse(params: {

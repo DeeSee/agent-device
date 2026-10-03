@@ -102,6 +102,17 @@ export type CaptureScreenshotResult = ScreenshotResultData & {
   identifiers: AgentDeviceIdentifiers;
 };
 
+/** Host-local screenshot evidence consumed from client-owned private temporary storage. */
+export type CaptureScreenshotArtifactOptions = Omit<
+  CaptureScreenshotOptions,
+  'path' | 'responseLevel'
+>;
+
+export type CaptureScreenshotArtifactResult = ScreenshotResultData & {
+  bytes: Uint8Array;
+  identifiers: AgentDeviceIdentifiers;
+};
+
 export type CaptureDiffOptions = DeviceCommandBaseOptions &
   Pick<CaptureSnapshotOptions, 'interactiveOnly' | 'depth' | 'scope' | 'raw'> & {
     kind: 'snapshot';

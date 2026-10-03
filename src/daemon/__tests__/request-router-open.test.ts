@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 import { legacyDispatchCapture } from './legacy-snapshot-capture-fixture.ts';
 import { test, expect, vi, beforeEach } from 'vitest';
@@ -175,9 +176,9 @@ test('open returns and creates the session state directory', async () => {
     expect(fs.existsSync(String(response.data?.sessionStateDir))).toBe(true);
     expect(fs.existsSync(String(response.data?.eventLogPath))).toBe(true);
   }
-  expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.stateDir).toBe(
-    sessionStore.resolveDaemonStateDir(),
-  );
+  expect(
+    inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.stateDir,
+  ).toBe(sessionStore.resolveDaemonStateDir());
 });
 
 test('fresh open uses app-aware device selection for advisory locking and dispatch', async () => {
@@ -761,7 +762,9 @@ test('open reconciles a foreign dead owner through that owner state dir, never t
     expect(fs.existsSync(path.join(foreignSessionDir, 'owned-processes.json'))).toBe(false);
     expect(fs.readFileSync(liveRecordPath, 'utf8')).toBe(liveRecordBefore);
     expect(isProcessAlive(orphan.marker.pid)).toBe(false);
-    expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.session).toBe('takeover');
+    expect(
+      inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.session,
+    ).toBe('takeover');
   } finally {
     try {
       orphan.child.kill('SIGKILL');
@@ -825,7 +828,9 @@ test('an open that booted the device keeps the device against a foreign open', a
     expect(foreign.ok).toBe(false);
     if (foreign.ok) return;
     expect(foreign.error.code).toBe('DEVICE_IN_USE');
-    expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.session).toBe('boot-owner');
+    expect(
+      inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.session,
+    ).toBe('boot-owner');
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;

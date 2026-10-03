@@ -17,14 +17,25 @@ function scratchStateDir(): [stateDir: string, infoPath: string] {
 
 function publishInfo(codeOrigin: DaemonCodeOrigin): string {
   const [stateDir, infoPath] = scratchStateDir();
-  writeInfo(stateDir, infoPath, path.join(stateDir, 'daemon.log'), {
-    httpPort: 41_234,
-    token: 'local-secret',
-    version: '0.0.0-test',
-    codeOrigin,
-    codeSignature: 'graph:1:abc',
-    processStartTime: 'start',
-  });
+  fs.writeFileSync(
+    path.join(stateDir, 'daemon.lock'),
+    JSON.stringify({ pid: process.pid, processStartTime: 'start', version: 'test', startedAt: 1 }),
+  );
+  writeInfo(
+    stateDir,
+    infoPath,
+    path.join(stateDir, 'daemon.lock'),
+    path.join(stateDir, 'daemon.log'),
+    {
+      deviceClaimRootId: 'test-root',
+      httpPort: 41_234,
+      token: 'local-secret',
+      version: '0.0.0-test',
+      codeOrigin,
+      codeSignature: 'graph:1:abc',
+      processStartTime: 'start',
+    },
+  );
   return infoPath;
 }
 

@@ -39,9 +39,10 @@ test('every command that deviates from require-owner is a reviewed, diffable set
   // the request scope of the command they dispatch.
   const { 'require-owner': _sessionBound, ...deviating } = commandsByPolicy();
   assert.deepEqual(deviating, {
-    'acquire-session': ['open'],
+    'acquire-session': ['open', 'session_reserve'],
     'release-session': ['close'],
     'transient-exclusive': [
+      'app_container_write_json',
       'boot',
       'install',
       'install_source',

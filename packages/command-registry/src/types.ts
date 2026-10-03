@@ -74,7 +74,7 @@ export type CommandTimeoutBudget =
 export type CommandTimeoutPolicy = {
   budget: CommandTimeoutBudget;
   envelopeMs: number | 'unbounded';
-  onTimeout: 'preserve-daemon' | 'reset-daemon';
+  onTimeout: 'preserve-daemon' | 'preserve-daemon-and-runner' | 'reset-daemon';
   /**
    * The descriptor's {@link CommandTargetReadiness} trait, attached by `resolveCommandTimeoutPolicy`
    * so the envelope can widen by the readiness budget. Descriptors declare it as `targetReadiness`,

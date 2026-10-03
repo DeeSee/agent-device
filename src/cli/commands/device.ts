@@ -1,3 +1,4 @@
+import { openDeviceClaimRoot } from '../../device-claim-root.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import { publicPlatformString } from '@agent-device/kernel/device';
 import {
@@ -18,12 +19,15 @@ export const deviceCommand: ClientCommandHandler = async ({ positionals, flags }
     throw new AppError('INVALID_ARGS', 'device accepts only: status, release');
   }
   if (positionals[0] === 'release') return await runDeviceRelease(flags);
-  const inspectedClaims = inspectDeviceClaims({
-    platform: flags.platform,
-    device: flags.device,
-    udid: flags.udid,
-    serial: flags.serial,
-  });
+  const inspectedClaims = inspectDeviceClaims(
+    {
+      platform: flags.platform,
+      device: flags.device,
+      udid: flags.udid,
+      serial: flags.serial,
+    },
+    openDeviceClaimRoot(),
+  );
   const staleClaims = inspectedClaims.filter((claim) =>
     deviceClaimRequiresStaleInspection(claim.classification),
   );

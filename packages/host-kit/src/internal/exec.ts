@@ -47,7 +47,7 @@ export type ExecBackgroundResult = {
   wait: Promise<ExecResult>;
 };
 
-type ExecDetachedOptions = ExecOptions & {
+export type ExecDetachedOptions = ExecOptions & {
   stdio?: StdioOptions;
 };
 
@@ -61,6 +61,10 @@ export type ExecDetachedExit = {
 export type ExecDetachedProcess = {
   pid: number;
   exited: Promise<ExecDetachedExit>;
+};
+
+export type ExecRetainedDetachedProcess = ExecDetachedProcess & {
+  readonly child: ChildProcess;
 };
 
 /**
@@ -414,6 +418,20 @@ export function runCmdDetachedMonitored(
   args: readonly string[],
   options: ExecDetachedOptions = {},
 ): ExecDetachedProcess {
+  const launch = runCmdDetachedRetained(cmd, args, options);
+  launch.child.unref();
+  return { pid: launch.pid, exited: launch.exited };
+}
+
+/**
+ * Spawns a detached process while retaining its exact ChildProcess authority.
+ * The owner must call `child.unref()` only after readiness or terminal proof.
+ */
+export function runCmdDetachedRetained(
+  cmd: string,
+  args: readonly string[],
+  options: ExecDetachedOptions = {},
+): ExecRetainedDetachedProcess {
   const executable = normalizeExecutableCommand(cmd);
   const child = spawn(executable, args, {
     cwd: options.cwd,
@@ -436,8 +454,7 @@ export function runCmdDetachedMonitored(
       });
     });
   });
-  child.unref();
-  return { pid, exited };
+  return { child, pid, exited };
 }
 
 export function runCmdBackground(

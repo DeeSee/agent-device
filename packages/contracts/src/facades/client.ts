@@ -1,4 +1,6 @@
 export type {
+  AppContainerWriteJsonOptions,
+  AppContainerWriteJsonResult,
   AppCloseOptions,
   AppCloseResult,
   AppDeployOptions,
@@ -19,6 +21,8 @@ export type {
 } from '../client-app.ts';
 export type {
   CaptureDiffOptions,
+  CaptureScreenshotArtifactOptions,
+  CaptureScreenshotArtifactResult,
   CaptureScreenshotOptions,
   CaptureScreenshotResult,
   CaptureSnapshotOptions,
@@ -28,6 +32,11 @@ export type {
 } from '../client-capture.ts';
 export type {
   AgentDeviceClientConfig,
+  AgentDeviceDaemonCleanupEvidence,
+  AgentDeviceDaemonCleanupResult,
+  AgentDeviceDaemonClaimEvidence,
+  AgentDeviceDaemonIdentity,
+  AgentDeviceDaemonStopResult,
   AgentDeviceDaemonTransport,
   AgentDeviceDaemonTransportContext,
   AgentDeviceIdentifiers,
@@ -42,6 +51,8 @@ export type {
   AgentDeviceSessionDevice,
   DeviceBootOptions,
   DeviceShutdownOptions,
+  SessionReserveOptions,
+  SessionReserveResult,
   StartupPerfSample,
 } from '../client-device-view.ts';
 export type {
@@ -134,3 +145,5 @@ export type {
 } from '../client-target.ts';
 export { isRecord } from '../json.ts';
 export type { JsonObject, JsonPrimitive, JsonValue } from '../json.ts';
+
+export type { StopLocalDaemon, StopLocalDaemonInput } from '../client-connection.ts';

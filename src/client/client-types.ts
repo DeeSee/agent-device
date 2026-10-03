@@ -51,6 +51,7 @@ export type { BatchRunResult } from '@agent-device/command-registry/batch';
 import type {
   AgentDeviceCapabilitiesResult,
   AgentDeviceClientConfig,
+  AgentDeviceDaemonStopResult,
   AgentDeviceDevice,
   AgentDeviceRequestOverrides,
   AgentDeviceSelectionOptions,
@@ -72,12 +73,16 @@ import type {
   AppStateCommandOptions,
   AppSwitcherCommandOptions,
   AppTriggerEventOptions,
+  AppContainerWriteJsonOptions,
+  AppContainerWriteJsonResult,
   AudioOptions,
   BackCommandOptions,
   BatchRunOptions,
   CaptureDiffOptions,
   CaptureScreenshotOptions,
   CaptureScreenshotResult,
+  CaptureScreenshotArtifactOptions,
+  CaptureScreenshotArtifactResult,
   CaptureSnapshotOptions,
   CaptureSnapshotResult,
   ClickOptions,
@@ -121,6 +126,8 @@ import type {
   RotateGestureOptions,
   ScrollOptions,
   SessionCloseResult,
+  SessionReserveOptions,
+  SessionReserveResult,
   SessionSaveScriptOptions,
   SessionSaveScriptResult,
   SettingsUpdateOptions,
@@ -186,6 +193,10 @@ export type AgentDeviceCommandClient = {
 };
 
 export type AgentDeviceClient = {
+  daemon: {
+    /** Gracefully stops only the local daemon bound at client construction. */
+    stop: () => Promise<AgentDeviceDaemonStopResult>;
+  };
   command: AgentDeviceCommandClient;
   devices: {
     list: (
@@ -198,6 +209,7 @@ export type AgentDeviceClient = {
     shutdown: (options?: DeviceShutdownOptions) => Promise<CommandResult<'shutdown'>>;
   };
   sessions: {
+    reserve: (options: SessionReserveOptions) => Promise<SessionReserveResult>;
     list: (options?: AgentDeviceRequestOverrides) => Promise<AgentDeviceSession[]>;
     stateDir: (
       options?: AgentDeviceRequestOverrides & Pick<AgentDeviceClientConfig, 'stateDir'>,
@@ -224,6 +236,9 @@ export type AgentDeviceClient = {
     close: (options?: AppCloseOptions) => Promise<AppCloseResult>;
     push: (options: AppPushOptions) => Promise<CommandResult<'push'>>;
     triggerEvent: (options: AppTriggerEventOptions) => Promise<CommandResult<'trigger-app-event'>>;
+    files: {
+      writeJson: (options: AppContainerWriteJsonOptions) => Promise<AppContainerWriteJsonResult>;
+    };
   };
   materializations: {
     release: (options: MaterializationReleaseOptions) => Promise<MaterializationReleaseResult>;
@@ -251,6 +266,9 @@ export type AgentDeviceClient = {
   capture: {
     snapshot: (options?: CaptureSnapshotOptions) => Promise<CaptureSnapshotResult>;
     screenshot: (options?: CaptureScreenshotOptions) => Promise<CaptureScreenshotResult>;
+    screenshotArtifact: (
+      options?: CaptureScreenshotArtifactOptions,
+    ) => Promise<CaptureScreenshotArtifactResult>;
     diff: (options: CaptureDiffOptions) => Promise<CommandResult<'diff'>>;
   };
   interactions: {

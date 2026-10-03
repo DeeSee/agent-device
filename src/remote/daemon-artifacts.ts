@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
 import type { DaemonArtifact, DaemonRequest, DaemonResponse } from '../daemon/daemon-request.ts';
 import {
   appendRecordingExtensionWhenMissing,
@@ -33,6 +33,7 @@ export async function prepareRemoteRequestArtifacts(
   info: DaemonArtifactEndpoint,
   signal: AbortSignal,
 ): Promise<PreparedRemoteRequest> {
+  if (signal.aborted) throw createRequestCanceledError({}, signal.reason);
   const positionals = [...(req.positionals ?? [])];
   let flags = req.flags ? { ...req.flags } : undefined;
   let installSource = req.meta?.installSource;

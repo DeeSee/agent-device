@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 import {
   type AppleOS,
@@ -7,6 +6,7 @@ import {
   type DeviceInfo,
   type Platform,
 } from '@agent-device/kernel/device';
+import { assertDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
 
 export function canonicalLocalDeviceKey(device: DeviceInfo | DeviceIdentity): string {
   return formatLocalDeviceKey(
@@ -24,14 +24,12 @@ function formatLocalDeviceKey(
   return `local:${platform}:${appleOs ?? 'none'}:${id}`;
 }
 
-export function resolveDeviceClaimRoot(): string {
-  const override = process.env.AGENT_DEVICE_CLAIMS_DIR?.trim();
-  return override
-    ? path.resolve(override)
-    : path.join(os.homedir(), '.agent-device', 'device-claims');
+export function resolveDeviceClaimPath(deviceKey: string, root: DeviceClaimRoot): string {
+  assertDeviceClaimRoot(root);
+  const hash = crypto.createHash('sha256').update(deviceKey).digest('hex');
+  return path.join(root.path, `${root.id}.${hash}.json`);
 }
 
-export function resolveDeviceClaimPath(deviceKey: string): string {
-  const hash = crypto.createHash('sha256').update(deviceKey).digest('hex');
-  return path.join(resolveDeviceClaimRoot(), `${hash}.json`);
+export function isDeviceClaimFileNameForRoot(fileName: string, root: DeviceClaimRoot): boolean {
+  return new RegExp(`^${root.id}\\.[a-f0-9]{64}\\.json$`, 'u').test(fileName);
 }

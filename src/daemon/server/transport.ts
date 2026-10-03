@@ -29,16 +29,15 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     let buffer = '';
-    let inFlightRequests = 0;
     const activeRequestIds = new Set<string>();
-    let canceledInFlight = false;
+    let connectionClosed = false;
     // On disconnect, cancel only this connection's in-flight requests via their
     // request-scoped AbortSignals. That aborts runner work owned by those requests
     // without a global Apple runner abort, so an unrelated request's runner work
     // (or non-Apple work) is never torn down by another client's disconnect.
     const cancelInFlightRequests = () => {
-      if (canceledInFlight || inFlightRequests === 0) return;
-      canceledInFlight = true;
+      if (connectionClosed) return;
+      connectionClosed = true;
       for (const requestId of activeRequestIds) {
         markRequestCanceled(requestId);
       }
@@ -46,7 +45,7 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
         level: 'warn',
         phase: 'request_client_disconnected',
         data: {
-          inFlightRequests,
+          inFlightRequests: activeRequestIds.size,
         },
       });
     };
@@ -58,7 +57,6 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
       buffer = parsed.buffer;
       for (const line of parsed.lines) {
         let response: DaemonResponse;
-        inFlightRequests += 1;
         let requestIdForCleanup: string | undefined;
         let requestAbortRegistration: ReturnType<typeof registerRequestAbort>;
         let streamProgress = false;
@@ -72,6 +70,7 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
           };
           requestAbortRegistration = registerRequestAbort(requestIdForCleanup);
           activeRequestIds.add(requestIdForCleanup);
+          if (connectionClosed) markRequestCanceled(requestIdForCleanup);
           if (isRequestCanceled(requestIdForCleanup)) {
             throw createRequestCanceledError();
           }
@@ -88,7 +87,6 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
         } catch (error) {
           response = { ok: false, error: normalizeError(error) };
         } finally {
-          inFlightRequests -= 1;
           if (requestAbortRegistration) {
             activeRequestIds.delete(requestAbortRegistration.requestId);
           }

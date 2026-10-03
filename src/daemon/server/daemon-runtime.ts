@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { openDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
 import { asAppError, AppError } from '@agent-device/kernel/errors';
 import { SessionStore } from '../session-store.ts';
 import { resolveSessionRequestLogPath } from '../session-artifact-paths.ts';
@@ -27,7 +28,10 @@ import {
 } from '../../provider-device-runtimes.ts';
 import { LeaseRegistry } from '../lease-registry.ts';
 import { createExpiredProviderLeaseReleaser } from '../provider-lease-expiry.ts';
-import { clearDaemonShutdownReport, writeDaemonShutdownReport } from '../daemon-shutdown-report.ts';
+import {
+  clearDaemonShutdownReport,
+  writeDaemonShutdownReport,
+} from '../../daemon-shutdown-report.ts';
 import { createRequestHandler } from '../request-router.ts';
 import { getLeaseRegistryExecutionLocks } from '../request-execution-scope.ts';
 import { stopSessionAppLog, teardownSessionResources } from '../session-teardown.ts';
@@ -47,7 +51,10 @@ import {
   type DeviceClaimReconciler,
 } from '../device/device-claims.ts';
 import { createOwnerScopedDeviceClaimReconciler } from '../device/device-claim-owner-recovery.ts';
-import { createDaemonShutdownClaimLedger } from './daemon-shutdown-claims.ts';
+import {
+  createDaemonShutdownClaimLedger,
+  observeInFlightRequestsForShutdown,
+} from './daemon-shutdown-claims.ts';
 import { createAudioProbeAdmissionLedger } from '@agent-device/capture-kit/audio-probe-admission-ledger';
 import { createPerfCaptureAdmissionLedger } from '@agent-device/capture-kit/perf-capture-admission-ledger';
 import { createScreenRecordingAdmissionLedger } from '@agent-device/capture-kit/screen-recording-admission-ledger';
@@ -207,6 +214,7 @@ export async function teardownDaemonSessionForShutdown(params: {
 
 export type DaemonRuntimeOptions = {
   env?: NodeJS.ProcessEnv;
+  deviceClaimsDir?: string;
   stdout?: WritableOutput;
   stderr?: WritableOutput;
   exit?: (code: number) => void;
@@ -267,10 +275,11 @@ async function emitDaemonDiagnostic(
  */
 async function removeOwnDaemonInfo(params: {
   infoPath: string;
+  lockPath: string;
   logPath: string;
   owner: OwnerIdentity;
 }): Promise<void> {
-  const removal = removeInfoOwnedBy(params.infoPath, params.owner);
+  const removal = removeInfoOwnedBy(params.infoPath, params.owner, params.lockPath);
   if (removal.removed || removal.reason === 'absent') return;
   await emitDaemonDiagnostic(params.logPath, 'daemon_info_removal_declined', {
     infoPath: params.infoPath,
@@ -315,6 +324,9 @@ export async function startDaemonRuntime(
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const exit = options.exit ?? ((code: number) => process.exit(code));
+  const deviceClaimRoot = openDeviceClaimRoot(
+    options.deviceClaimsDir ?? env.AGENT_DEVICE_CLAIMS_DIR,
+  );
   const daemonPaths = resolveDaemonPaths(env.AGENT_DEVICE_STATE_DIR);
   const { baseDir, infoPath, lockPath, logPath, sessionsDir } = daemonPaths;
   const daemonServerMode = resolveDaemonServerMode(env.AGENT_DEVICE_DAEMON_SERVER_MODE);
@@ -330,7 +342,7 @@ export async function startDaemonRuntime(
     return null;
   }
 
-  const sessionStore = new SessionStore(sessionsDir);
+  const sessionStore = new SessionStore(sessionsDir, { deviceClaimRoot });
   const ownedProcessRecords = createOwnedProcessRecordStore({
     stateDir: baseDir,
     sessionsDir,
@@ -452,7 +464,7 @@ export async function startDaemonRuntime(
     );
   };
 
-  const shutdownClaimLedger = createDaemonShutdownClaimLedger();
+  const shutdownClaimLedger = createDaemonShutdownClaimLedger(deviceClaimRoot);
 
   const teardownDaemonSession = async (session: SessionState): Promise<void> => {
     try {
@@ -569,6 +581,99 @@ export async function startDaemonRuntime(
     env,
   });
 
+  let servers: DaemonServer[] = [];
+  let shuttingDown = false;
+  let startupTailSettled = false;
+  let deferredShutdown: { exitCode?: number; cause?: unknown } | null = null;
+  const shutdown = async (shutdownOptions: { exitCode?: number; cause?: unknown } = {}) => {
+    idleReap.cancel();
+    sessionIdleExpiry.cancel();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopMetadataLossWatch();
+    if (shutdownOptions.cause) {
+      await emitFatalDiagnostic(shutdownOptions.cause);
+    }
+    observeInFlightRequestsForShutdown(shutdownClaimLedger, inFlightRequestCount);
+    await closeDaemonServers(servers);
+    observeInFlightRequestsForShutdown(shutdownClaimLedger, inFlightRequestCount);
+    // Hand healthy runners off before durable session teardown. The lifecycle gateway later
+    // terminates only still-owned generations once all resources have finalized.
+    //
+    // The scope is what makes this step observable: a SIGTERM shutdown has no request, and therefore
+    // no diagnostics scope, so `emitDiagnostic` would drop every detach reason. Daemon debug level is
+    // forced on here because the declines are the point of the record — a handoff that silently
+    // skipped is indistinguishable from a rebuild (#2681).
+    try {
+      await withDiagnosticsScope(
+        { command: 'daemon', session: 'daemon', logPath, debug: true },
+        async () => {
+          await applicationLifecycle.detachForDaemonShutdown();
+          flushDiagnosticsToSessionFile({ force: true });
+        },
+      );
+    } catch {}
+    expiredProviderLeaseReleaser.beginShutdown();
+    await teardownDaemonSessions();
+    try {
+      await platformDaemonLifecycleOwners.resetAndroidSnapshotHelper();
+    } catch (error) {
+      emitDiagnostic({
+        level: 'warn',
+        phase: 'daemon_shutdown_android_snapshot_helper_cleanup_failed',
+        data: { error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    const providerReleaseDrain = await expiredProviderLeaseReleaser.drain(
+      DAEMON_PROVIDER_RELEASE_DRAIN_TIMEOUT_MS,
+    );
+    if (daemonProcessStartTime)
+      writeDaemonShutdownReport(baseDir, {
+        daemon: {
+          pid: process.pid,
+          processStartTime: daemonProcessStartTime,
+          version,
+          codeSignature: daemonCodeSignature,
+          deviceClaimRootId: deviceClaimRoot.id,
+        },
+        providerReleases: providerReleaseDrain,
+        claims: shutdownClaimLedger.claims,
+      });
+    emitDiagnostic({
+      level: providerReleaseDrain.pending.length === 0 ? 'info' : 'warn',
+      phase: 'daemon_shutdown_provider_release_drain',
+      data: {
+        releasedLeaseIds: providerReleaseDrain.released.map((lease) => lease.leaseId),
+        pendingLeaseIds: providerReleaseDrain.pending.map((lease) => lease.leaseId),
+        releasedDeviceKeys: shutdownClaimLedger.claims.released.map((claim) => claim.deviceKey),
+        orphanedDeviceKeys: shutdownClaimLedger.claims.orphaned.map((claim) => claim.deviceKey),
+      },
+    });
+    expiredProviderLeaseReleaser.shutdown();
+    await deviceRuntimeGateway.shutdown();
+    await Promise.allSettled(
+      providerDeviceRuntimes.map(async (runtime) => await runtime.shutdown()),
+    );
+    await applicationLifecycle.finalizeDaemonShutdown();
+    // Best effort: stop the PNG worker so an in-flight job cannot delay exit.
+    await Promise.race([
+      terminatePngWorker().catch(() => {}),
+      sleep(DAEMON_PNG_WORKER_TERMINATE_TIMEOUT_MS),
+    ]);
+    await removeOwnDaemonInfo({ infoPath, lockPath, logPath, owner: daemonIdentity });
+    releaseDaemonLock(lockPath);
+    await platformDaemonLifecycleOwners.clearDaemonLockConfiguration();
+    exit(shutdownOptions.exitCode ?? 0);
+  };
+
+  const requestShutdown = (shutdownOptions: { exitCode?: number; cause?: unknown } = {}): void => {
+    if (!startupTailSettled) {
+      if (!deferredShutdown || shutdownOptions.exitCode === 1) deferredShutdown = shutdownOptions;
+      return;
+    }
+    void shutdown(shutdownOptions);
+  };
+
   const handleRequest: DaemonInvokeFn = async (req) => {
     inFlightRequestCount++;
     idleReap.cancel();
@@ -620,7 +725,7 @@ export async function startDaemonRuntime(
   };
 
   const publishDaemonInfo = (socketPort: number | undefined, httpPort: number | undefined) => {
-    writeInfo(baseDir, infoPath, logPath, {
+    writeInfo(baseDir, infoPath, lockPath, logPath, {
       socketPort,
       httpPort,
       token,
@@ -629,6 +734,7 @@ export async function startDaemonRuntime(
       codeSignature: daemonCodeSignature,
       processStartTime: daemonProcessStartTime,
       policyDigest: daemonPolicy?.digest,
+      deviceClaimRootId: deviceClaimRoot.id,
     });
     if (socketPort) stdout.write(`AGENT_DEVICE_DAEMON_PORT=${socketPort}\n`);
     if (httpPort) stdout.write(`AGENT_DEVICE_DAEMON_HTTP_PORT=${httpPort}\n`);
@@ -655,14 +761,13 @@ export async function startDaemonRuntime(
   }
   clearDaemonShutdownReport(baseDir);
 
-  let servers: DaemonServer[] = [];
   let socketPort: number | undefined;
   let httpPort: number | undefined;
   const startupDiagnostics: ResourceDiagnostic[] = [];
   try {
     await platformDaemonLifecycleOwners.configureForDaemonLock({
       stateDir: baseDir,
-      hasDeviceClaimAuthority: processOwnsActiveDeviceClaim,
+      hasDeviceClaimAuthority: (device) => processOwnsActiveDeviceClaim(device, deviceClaimRoot),
       onDiagnostic: (diagnostic) => startupDiagnostics.push(diagnostic),
     });
     const legacyMarkerRecovery =
@@ -714,6 +819,29 @@ export async function startDaemonRuntime(
     servers = opened.servers;
     socketPort = opened.socketPort;
     httpPort = opened.httpPort;
+    if (options.registerProcessHandlers !== false) {
+      process.on('SIGINT', () => {
+        requestShutdown();
+      });
+      process.on('SIGTERM', () => {
+        requestShutdown();
+      });
+      process.on('SIGHUP', () => {
+        requestShutdown();
+      });
+      process.on('uncaughtException', (err) => {
+        const appErr = err instanceof AppError ? err : asAppError(err);
+        stderr.write(`Daemon error: ${appErr.message}\n`);
+        requestShutdown({ exitCode: 1, cause: err });
+      });
+      process.on('unhandledRejection', (reason) => {
+        const err = reason instanceof Error ? reason : new Error(String(reason));
+        const appErr = err instanceof AppError ? err : asAppError(err);
+        stderr.write(`Daemon error: ${appErr.message}\n`);
+        requestShutdown({ exitCode: 1, cause: err });
+      });
+    }
+
     publishDaemonInfo(socketPort, httpPort);
     stopMetadataLossWatch = armDaemonMetadataLossWatch(baseDir, infoPath, logPath, daemonIdentity);
     await flushDaemonStartupDiagnostics(logPath, startupDiagnostics);
@@ -723,7 +851,10 @@ export async function startDaemonRuntime(
       logPath,
       createOwnerScopedDeviceClaimReconciler(createDaemonRecoveryPlatformScope()),
       baseDir,
+      deviceClaimRoot,
     );
+    startupTailSettled = true;
+    if (deferredShutdown) void shutdown(deferredShutdown);
     // Arms the initial idle-reap timer: a daemon that starts and never
     // receives a request must still be able to reap itself.
     idleReap.noteActivity();
@@ -734,7 +865,7 @@ export async function startDaemonRuntime(
     stderr.write(`Daemon error: ${appErr.message}\n`);
     closeServersBestEffort(servers);
     stopMetadataLossWatch();
-    await removeOwnDaemonInfo({ infoPath, logPath, owner: daemonIdentity });
+    await removeOwnDaemonInfo({ infoPath, lockPath, logPath, owner: daemonIdentity });
     releaseDaemonLock(lockPath);
     await platformDaemonLifecycleOwners.clearDaemonLockConfiguration();
     exit(1);
@@ -745,101 +876,6 @@ export async function startDaemonRuntime(
   // cold-start cost is not paid on a user-visible call. Best effort: when it
   // cannot start, PNG processing falls back to the in-process sync path.
   prewarmPngWorker();
-
-  let shuttingDown = false;
-  const shutdown = async (shutdownOptions: { exitCode?: number; cause?: unknown } = {}) => {
-    idleReap.cancel();
-    sessionIdleExpiry.cancel();
-    if (shuttingDown) return;
-    shuttingDown = true;
-    stopMetadataLossWatch();
-    if (shutdownOptions.cause) {
-      await emitFatalDiagnostic(shutdownOptions.cause);
-    }
-    await closeDaemonServers(servers);
-    // Hand healthy runners off before durable session teardown. The lifecycle gateway later
-    // terminates only still-owned generations once all resources have finalized.
-    //
-    // The scope is what makes this step observable: a SIGTERM shutdown has no request, and therefore
-    // no diagnostics scope, so `emitDiagnostic` would drop every detach reason. Daemon debug level is
-    // forced on here because the declines are the point of the record — a handoff that silently
-    // skipped is indistinguishable from a rebuild (#2681).
-    try {
-      await withDiagnosticsScope(
-        { command: 'daemon', session: 'daemon', logPath, debug: true },
-        async () => {
-          await applicationLifecycle.detachForDaemonShutdown();
-          flushDiagnosticsToSessionFile({ force: true });
-        },
-      );
-    } catch {}
-    expiredProviderLeaseReleaser.beginShutdown();
-    await teardownDaemonSessions();
-    try {
-      await platformDaemonLifecycleOwners.resetAndroidSnapshotHelper();
-    } catch (error) {
-      emitDiagnostic({
-        level: 'warn',
-        phase: 'daemon_shutdown_android_snapshot_helper_cleanup_failed',
-        data: { error: error instanceof Error ? error.message : String(error) },
-      });
-    }
-    const providerReleaseDrain = await expiredProviderLeaseReleaser.drain(
-      DAEMON_PROVIDER_RELEASE_DRAIN_TIMEOUT_MS,
-    );
-    writeDaemonShutdownReport(baseDir, {
-      providerReleases: providerReleaseDrain,
-      claims: shutdownClaimLedger.claims,
-    });
-    emitDiagnostic({
-      level: providerReleaseDrain.pending.length === 0 ? 'info' : 'warn',
-      phase: 'daemon_shutdown_provider_release_drain',
-      data: {
-        releasedLeaseIds: providerReleaseDrain.released.map((lease) => lease.leaseId),
-        pendingLeaseIds: providerReleaseDrain.pending.map((lease) => lease.leaseId),
-        releasedDeviceKeys: shutdownClaimLedger.claims.released.map((claim) => claim.deviceKey),
-        orphanedDeviceKeys: shutdownClaimLedger.claims.orphaned.map((claim) => claim.deviceKey),
-      },
-    });
-    expiredProviderLeaseReleaser.shutdown();
-    await deviceRuntimeGateway.shutdown();
-    await Promise.allSettled(
-      providerDeviceRuntimes.map(async (runtime) => await runtime.shutdown()),
-    );
-    await applicationLifecycle.finalizeDaemonShutdown();
-    // Best effort: stop the PNG worker so an in-flight job cannot delay exit.
-    await Promise.race([
-      terminatePngWorker().catch(() => {}),
-      sleep(DAEMON_PNG_WORKER_TERMINATE_TIMEOUT_MS),
-    ]);
-    await removeOwnDaemonInfo({ infoPath, logPath, owner: daemonIdentity });
-    releaseDaemonLock(lockPath);
-    await platformDaemonLifecycleOwners.clearDaemonLockConfiguration();
-    exit(shutdownOptions.exitCode ?? 0);
-  };
-
-  if (options.registerProcessHandlers !== false) {
-    process.on('SIGINT', () => {
-      void shutdown();
-    });
-    process.on('SIGTERM', () => {
-      void shutdown();
-    });
-    process.on('SIGHUP', () => {
-      void shutdown();
-    });
-    process.on('uncaughtException', (err) => {
-      const appErr = err instanceof AppError ? err : asAppError(err);
-      stderr.write(`Daemon error: ${appErr.message}\n`);
-      void shutdown({ exitCode: 1, cause: err });
-    });
-    process.on('unhandledRejection', (reason) => {
-      const err = reason instanceof Error ? reason : new Error(String(reason));
-      const appErr = err instanceof AppError ? err : asAppError(err);
-      stderr.write(`Daemon error: ${appErr.message}\n`);
-      void shutdown({ exitCode: 1, cause: err });
-    });
-  }
 
   return {
     httpPort,
@@ -853,6 +889,7 @@ async function reconcileDeviceClaimsForDaemonStartup(
   logPath: string,
   reconcile: DeviceClaimReconciler,
   stateDir: string,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<void> {
   // Startup runs outside any diagnostics scope, where emitDiagnostic is a no-op,
   // so reconciliation has to open one of its own for its events to be recorded.
@@ -860,7 +897,7 @@ async function reconcileDeviceClaimsForDaemonStartup(
     { command: 'daemon', session: 'daemon', logPath, debug: true },
     async () => {
       try {
-        const summary = await reconcileOrphanedDeviceClaims(reconcile, stateDir);
+        const summary = await reconcileOrphanedDeviceClaims(reconcile, stateDir, deviceClaimRoot);
         if (summary.examined > 0) {
           emitDiagnostic({ phase: 'device_claim_reconcile', data: summary });
           flushDiagnosticsToSessionFile({ force: true });

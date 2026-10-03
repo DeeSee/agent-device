@@ -1,3 +1,9 @@
+import { openDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
+import {
+  inspectDeviceClaims,
+  type DeviceClaimSelectors,
+  type InspectedDeviceClaim,
+} from '../../daemon/device/device-claim-inspection.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach } from 'vitest';
@@ -18,8 +24,10 @@ export type IsolatedDeviceClaimStore = {
  */
 export function isolatedDeviceClaimStores(prefix: string): () => IsolatedDeviceClaimStore {
   const roots: string[] = [];
+  const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   afterEach(() => {
-    delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+    if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+    else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
   return () => {
@@ -57,4 +65,13 @@ export function publishDaemonRegistration(stateDir: string, owner: OwnerIdentity
       stateDir,
     }),
   );
+}
+
+export function currentTestDeviceClaimRoot(): DeviceClaimRoot {
+  const root = process.env.AGENT_DEVICE_CLAIMS_DIR;
+  if (!root) throw new Error('Claim tests require an isolated AGENT_DEVICE_CLAIMS_DIR');
+  return openDeviceClaimRoot(root);
+}
+export function inspectTestDeviceClaims(selectors: DeviceClaimSelectors): InspectedDeviceClaim[] {
+  return inspectDeviceClaims(selectors, currentTestDeviceClaimRoot());
 }

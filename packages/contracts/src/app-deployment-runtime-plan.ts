@@ -2,6 +2,8 @@ import { defineUse } from './platform-runtime-operations.ts';
 
 export const deployAppUse = defineUse({ required: ['deployApp'] });
 
+export const writeAppContainerJsonUse = defineUse({ required: ['writeAppContainerJson'] });
+
 /**
  * Source installs retain their readiness precondition in the same request binding as
  * materialization and deployment, so the handler has one admission and one bind.

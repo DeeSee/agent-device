@@ -1,3 +1,8 @@
+import {
+  currentTestDeviceClaimRoot,
+  isolatedDeviceClaimStores,
+  retainOrphanedDeviceClaims,
+} from '../../../__tests__/test-utils/device-claim-store.ts';
 import { expect, test, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,10 +13,6 @@ import {
   type DeviceBindingIntent,
 } from '@agent-device/contracts/platform-runtime';
 import { ANDROID_EMULATOR } from '../../../__tests__/test-utils/device-fixtures.ts';
-import {
-  isolatedDeviceClaimStores,
-  retainOrphanedDeviceClaims,
-} from '../../../__tests__/test-utils/device-claim-store.ts';
 import {
   acquireAllocatorHeldDeviceClaim,
   inspectAllocatorHeldDeviceClaim,
@@ -42,7 +43,10 @@ const fence = managedBindingFence({
 const managedBinding: DeviceBindingIntent = { kind: 'exact-owner', owner, fence };
 
 const claimPath = () =>
-  resolveDeviceClaimPath(canonicalLocalDeviceKey(deviceClaimIdentity(ANDROID_EMULATOR)));
+  resolveDeviceClaimPath(
+    canonicalLocalDeviceKey(deviceClaimIdentity(ANDROID_EMULATOR)),
+    currentTestDeviceClaimRoot(),
+  );
 
 function principal(
   stateDir: string,
@@ -58,6 +62,7 @@ function principal(
 
 async function acquireHeld(stateDir: string, overrides: Partial<AllocatorHeldClaimPrincipal> = {}) {
   return await acquireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     principal: principal(stateDir, overrides),
   });
@@ -73,7 +78,13 @@ function principalMismatches(root: string): Partial<AllocatorHeldClaimPrincipal>
 }
 
 function verify(intent: DeviceBindingIntent, stateDir: string) {
-  return requireAllocatorHeldDeviceClaim({ device: ANDROID_EMULATOR, owner, stateDir, intent });
+  return requireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
+    device: ANDROID_EMULATOR,
+    owner,
+    stateDir,
+    intent,
+  });
 }
 
 test('requireAllocatorHeldDeviceClaim refuses a binding without a managed binding fence before reading the store', () => {
@@ -88,19 +99,20 @@ test('requireAllocatorHeldDeviceClaim refuses a binding without a managed bindin
   expect(
     verify({ kind: 'exact-owner', owner, fence: { token: 'fence', generation: 1 } }, stateDir),
   ).toEqual({ status: 'binding-invalid' });
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(fs.readdirSync(claimsDir)).toEqual([]);
 });
 
-test('requireAllocatorHeldDeviceClaim reports a missing claim without creating the store', () => {
+test('requireAllocatorHeldDeviceClaim reports a missing claim without adding a claim', () => {
   const { stateDir, claimsDir } = setup();
 
   expect(verify(managedBinding, stateDir)).toEqual({ status: 'missing' });
-  expect(fs.existsSync(claimsDir)).toBe(false);
+  expect(fs.readdirSync(claimsDir)).toEqual([]);
 });
 
 test('requireAllocatorHeldDeviceClaim reports a foreign live claim as a conflict and never touches it', async () => {
   const { stateDir, claimsDir } = setup();
   await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     session: 'owner-session',
     workspace: '/worktrees/foreign',
@@ -145,6 +157,7 @@ test('an allocator-held claim is acquired with the installation principal and re
   const before = fs.readFileSync(claimPath(), 'utf8');
   for (const mismatch of principalMismatches(root)) {
     const outcome = await acquireAllocatorHeldDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: ANDROID_EMULATOR,
       principal: { ...principal(stateDir), ...mismatch },
     });
@@ -202,6 +215,7 @@ test('requireAllocatorHeldDeviceClaim covers only the local allocator-held claim
 
   // So is another allocator instance, matched through the derived managed owner.
   const otherInstance = requireAllocatorHeldDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     owner: managedLocalRuntimeOwner('sim-b'),
     stateDir,
@@ -232,6 +246,7 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
 
   expect(
     await releaseAllocatorHeldClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: ANDROID_EMULATOR,
       removalProof: principal(stateDir),
     }),
@@ -242,6 +257,7 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
   for (const mismatch of principalMismatches(root)) {
     expect(
       await releaseAllocatorHeldClaim({
+        deviceClaimRoot: currentTestDeviceClaimRoot(),
         device: ANDROID_EMULATOR,
         removalProof: { ...principal(stateDir), ...mismatch },
       }),
@@ -250,6 +266,7 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
   }
   expect(
     await releaseAllocatorHeldClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: ANDROID_EMULATOR,
       removalProof: principal(stateDir),
     }),
@@ -258,6 +275,7 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
 
   // A process-owned claim is not the allocator's to remove, however complete the proof.
   await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     session: 'owner-session',
     workspace: '/worktrees/session',
@@ -267,6 +285,7 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
   const sessionClaim = fs.readFileSync(claimPath(), 'utf8');
   expect(
     await releaseAllocatorHeldClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: ANDROID_EMULATOR,
       removalProof: principal(stateDir),
     }),
@@ -277,20 +296,28 @@ test('releaseAllocatorHeldClaim clears only with matching removal proof and neve
 test('inspectAllocatorHeldDeviceClaim answers only for an allocator-held record', async () => {
   const { stateDir } = setup();
 
-  expect(inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR)).toBeNull();
+  expect(
+    inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR, currentTestDeviceClaimRoot()),
+  ).toBeNull();
 
   await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: ANDROID_EMULATOR,
     session: 'owner-session',
     workspace: '/worktrees/session',
     stateDir,
     reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
   });
-  expect(inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR)).toBeNull();
+  expect(
+    inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR, currentTestDeviceClaimRoot()),
+  ).toBeNull();
 
   fs.rmSync(claimPath());
   await acquireHeld(stateDir);
-  expect(inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR)?.allocatorClaim?.allocator).toEqual({
+  expect(
+    inspectAllocatorHeldDeviceClaim(ANDROID_EMULATOR, currentTestDeviceClaimRoot())?.allocatorClaim
+      ?.allocator,
+  ).toEqual({
     instanceId: 'sim-a',
     identityIncarnationId: 'incarnation-1',
   });

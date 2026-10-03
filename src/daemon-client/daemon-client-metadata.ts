@@ -1,7 +1,17 @@
 import fs from 'node:fs';
+import { AppError } from '@agent-device/kernel/errors';
+import {
+  resolveDaemonLockMutationGuardPath,
+  tryAcquireDaemonLockMutationGuard,
+} from '../daemon-lock-mutation.ts';
 import { shellQuote } from '@agent-device/kernel/device-shell';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
-import { isAgentDeviceDaemonProcess, stopProcessForTakeover } from '../daemon-process.ts';
+import {
+  isAgentDeviceDaemonProcess,
+  inspectAgentDeviceDaemonProcess,
+  type AgentDeviceDaemonProcessObservation,
+  stopProcessForTakeover,
+} from '../daemon-process.ts';
 
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 
@@ -23,6 +33,7 @@ export type DaemonInfo = {
   processStartTime?: string;
   /** ADR 0029: digest of the daemon policy the daemon enforces; absent when it has none. */
   policyDigest?: string;
+  deviceClaimRootId?: string;
   baseUrl?: string;
   remoteInstanceId?: string;
   remoteUpstreamInstanceId?: string;
@@ -71,8 +82,9 @@ export function readDaemonInfo(infoPath: string): DaemonInfo | null {
     version: readOptionalString(parsed.version),
     codeOrigin: readDaemonInfoCodeOrigin(parsed.codeOrigin),
     codeSignature: readOptionalString(parsed.codeSignature),
-    processStartTime: readOptionalString(parsed.processStartTime),
     policyDigest: readOptionalString(parsed.policyDigest),
+    processStartTime: readOptionalNonBlankString(parsed.processStartTime),
+    deviceClaimRootId: readOptionalNonBlankString(parsed.deviceClaimRootId),
   };
 }
 
@@ -101,6 +113,12 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+function readOptionalNonBlankString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function readPositiveInteger(value: unknown): number | undefined {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
@@ -115,16 +133,11 @@ function readDaemonLockInfo(lockPath: string): DaemonLockInfo | null {
   }
   return {
     pid: Number(parsed.pid),
-    processStartTime:
-      typeof parsed.processStartTime === 'string' ? parsed.processStartTime : undefined,
+    processStartTime: readOptionalNonBlankString(parsed.processStartTime),
     startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : undefined,
   };
 }
 
-/**
- * Whether a live daemon other than `pid` holds the startup lock: another client's daemon won the
- * start, and the daemon at `pid` exited because it lost the lock.
- */
 export function isDaemonLockHeldByAnotherDaemon(paths: DaemonPaths, pid: number): boolean {
   const lockInfo = readDaemonLockInfo(paths.lockPath);
   return (
@@ -134,34 +147,30 @@ export function isDaemonLockHeldByAnotherDaemon(paths: DaemonPaths, pid: number)
   );
 }
 
-export function removeDaemonInfo(infoPath: string): void {
-  removeFileIfExists(infoPath);
-}
-
-export function removeDaemonLock(lockPath: string): void {
-  removeFileIfExists(lockPath);
-}
-
-export function cleanupStaleDaemonLockIfSafe(paths: DaemonPaths): void {
-  const state = getDaemonMetadataState(paths);
-  if (!state.hasLock || state.hasInfo) return;
-  const lockInfo = readDaemonLockInfo(paths.lockPath);
-  if (!lockInfo) {
-    removeDaemonLock(paths.lockPath);
-    return;
+export function cleanupStaleDaemonLockIfSafe(
+  paths: DaemonPaths,
+  inspectDaemonProcess: typeof inspectAgentDeviceDaemonProcess = inspectAgentDeviceDaemonProcess,
+): boolean {
+  const release = tryAcquireDaemonLockMutationGuard(paths.lockPath);
+  if (!release) return false;
+  try {
+    const state = getDaemonMetadataState(paths);
+    if (!state.hasLock) return true;
+    const lockInfo = readDaemonLockInfo(paths.lockPath);
+    if (!lockInfo) return false;
+    const observation = inspectDaemonProcess(lockInfo.pid, lockInfo.processStartTime);
+    if (!canDiscardDaemonMetadata(observation)) return false;
+    removeFileIfExists(paths.lockPath);
+    return !fs.existsSync(paths.lockPath);
+  } finally {
+    release();
   }
-  if (isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime)) {
-    return;
-  }
-  removeDaemonLock(paths.lockPath);
 }
 
 export async function cleanupFailedDaemonStartupMetadata(
   paths: DaemonPaths,
   reason: DaemonStartupCleanupReason,
-  options: { stopLiveProcesses?: boolean } = {},
 ): Promise<DaemonStartupCleanupResult> {
-  const stopLiveProcesses = options.stopLiveProcesses ?? true;
   const result: DaemonStartupCleanupResult = {
     reason,
     removedInfo: false,
@@ -170,50 +179,55 @@ export async function cleanupFailedDaemonStartupMetadata(
     stoppedLockProcess: false,
   };
 
-  try {
-    const infoExists = fs.existsSync(paths.infoPath);
-    const info = readDaemonInfo(paths.infoPath);
-    if (info) {
-      const liveInfoProcess = isAgentDeviceDaemonProcess(info.pid, info.processStartTime);
-      if (liveInfoProcess && !stopLiveProcesses) {
+  const releaseLockMutation = tryAcquireDaemonLockMutationGuard(paths.lockPath);
+  if (!releaseLockMutation) {
+    result.retainedInfoProcess = fs.existsSync(paths.infoPath) || undefined;
+    // The guard itself is live mutation authority. Even when daemon.lock has not been
+    // published yet, another cooperating startup may be inside that critical section.
+    result.retainedLockProcess = true;
+    result.error = 'Daemon metadata mutation is owned by another process';
+  } else {
+    try {
+      const infoExists = fs.existsSync(paths.infoPath);
+      const info = readDaemonInfo(paths.infoPath);
+      if (info) {
+        const infoOwner = inspectAgentDeviceDaemonProcess(info.pid, info.processStartTime);
+        if (infoOwner === 'match') {
+          result.retainedInfoProcess = true;
+        } else if (infoOwner === 'unknown') {
+          result.retainedInfoProcess = true;
+          result.error = 'Daemon info process identity could not be verified';
+        } else {
+          removeFileIfExists(paths.infoPath);
+          result.removedInfo = !fs.existsSync(paths.infoPath);
+        }
+      } else if (infoExists) {
         result.retainedInfoProcess = true;
-      } else {
-        if (liveInfoProcess) {
-          await stopDaemonProcessForTakeover(info);
-          result.stoppedInfoProcess = true;
-        }
-        removeDaemonInfo(paths.infoPath);
-        result.removedInfo = true;
+        result.error = 'Daemon info metadata is malformed and cannot be verified';
       }
-    } else if (infoExists) {
-      removeDaemonInfo(paths.infoPath);
-      result.removedInfo = true;
-    }
 
-    const lockExists = fs.existsSync(paths.lockPath);
-    const lockInfo = readDaemonLockInfo(paths.lockPath);
-    if (lockInfo) {
-      const liveLockProcess = isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime);
-      if (liveLockProcess && !stopLiveProcesses) {
-        result.retainedLockProcess = true;
-      } else {
-        if (liveLockProcess) {
-          await stopProcessForTakeover(lockInfo.pid, {
-            termTimeoutMs: DAEMON_TAKEOVER_TERM_TIMEOUT_MS,
-            killTimeoutMs: DAEMON_TAKEOVER_KILL_TIMEOUT_MS,
-            expectedStartTime: lockInfo.processStartTime,
-          });
-          result.stoppedLockProcess = true;
+      const lockExists = fs.existsSync(paths.lockPath);
+      const lockInfo = readDaemonLockInfo(paths.lockPath);
+      if (lockInfo) {
+        const lockOwner = inspectAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime);
+        if (lockOwner === 'match') {
+          result.retainedLockProcess = true;
+        } else if (lockOwner === 'unknown') {
+          result.retainedLockProcess = true;
+          result.error ??= 'Daemon lock process identity could not be verified';
+        } else {
+          removeFileIfExists(paths.lockPath);
+          result.removedLock = !fs.existsSync(paths.lockPath);
         }
-        removeDaemonLock(paths.lockPath);
-        result.removedLock = true;
+      } else if (lockExists) {
+        result.retainedLockProcess = true;
+        result.error ??= 'Daemon lock metadata is malformed and cannot be verified';
       }
-    } else if (lockExists) {
-      removeDaemonLock(paths.lockPath);
-      result.removedLock = true;
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      releaseLockMutation();
     }
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
   }
 
   emitDiagnostic({
@@ -232,25 +246,95 @@ export function getDaemonMetadataState(paths: DaemonPaths): DaemonMetadataState 
 }
 
 export async function recoverDaemonLockHolder(paths: DaemonPaths): Promise<boolean> {
-  const state = getDaemonMetadataState(paths);
-  if (!state.hasLock || state.hasInfo) return false;
-  const lockInfo = readDaemonLockInfo(paths.lockPath);
-  if (!lockInfo) {
-    removeDaemonLock(paths.lockPath);
-    return true;
+  const release = tryAcquireDaemonLockMutationGuard(paths.lockPath);
+  if (!release) return false;
+  try {
+    const state = getDaemonMetadataState(paths);
+    if (!state.hasLock || state.hasInfo) return false;
+    const lockInfo = readDaemonLockInfo(paths.lockPath);
+    if (!lockInfo) return false;
+    const observation = inspectAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime);
+    if (!canDiscardDaemonMetadata(observation)) return false;
+    removeFileIfExists(paths.lockPath);
+    return !fs.existsSync(paths.lockPath);
+  } finally {
+    release();
   }
-  if (!isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime)) {
-    removeDaemonLock(paths.lockPath);
-    return true;
-  }
-  return false;
 }
 
-export async function stopDaemonProcessForTakeover(info: DaemonInfo): Promise<void> {
+function canDiscardDaemonMetadata(observation: AgentDeviceDaemonProcessObservation): boolean {
+  return observation === 'absent' || observation === 'different';
+}
+
+async function stopDaemonProcessForTakeover(info: DaemonInfo): Promise<void> {
   await stopProcessForTakeover(info.pid, {
     termTimeoutMs: DAEMON_TAKEOVER_TERM_TIMEOUT_MS,
     killTimeoutMs: DAEMON_TAKEOVER_KILL_TIMEOUT_MS,
     expectedStartTime: info.processStartTime,
+  });
+}
+
+export async function stopDaemonMetadataOwnerForTakeover(
+  paths: Pick<DaemonPaths, 'infoPath' | 'lockPath'>,
+  expected: DaemonInfo,
+): Promise<{ removedInfo: boolean; removedLock: boolean }> {
+  const release = tryAcquireDaemonLockMutationGuard(paths.lockPath);
+  if (!release) {
+    throw new AppError('COMMAND_FAILED', 'Daemon metadata is being changed by another process', {
+      reason: 'daemon_takeover_incomplete',
+      phase: 'metadata_mutation',
+      lockPath: paths.lockPath,
+    });
+  }
+  try {
+    const infoExists = fs.existsSync(paths.infoPath);
+    const currentInfo = readDaemonInfo(paths.infoPath);
+    if (infoExists && !currentInfo) {
+      throw daemonMetadataOwnershipChanged(paths, 'malformed_info');
+    }
+    if (currentInfo && !sameDaemonProcessIdentity(currentInfo, expected)) {
+      throw daemonMetadataOwnershipChanged(paths, 'info_owner_changed');
+    }
+
+    const lockExists = fs.existsSync(paths.lockPath);
+    const currentLock = readDaemonLockInfo(paths.lockPath);
+    if (lockExists && !currentLock) {
+      throw daemonMetadataOwnershipChanged(paths, 'malformed_lock');
+    }
+    if (currentLock && !sameDaemonProcessIdentity(currentLock, expected)) {
+      throw daemonMetadataOwnershipChanged(paths, 'lock_owner_changed');
+    }
+
+    await stopDaemonProcessForTakeover(expected);
+    removeFileIfExists(paths.infoPath);
+    removeFileIfExists(paths.lockPath);
+    return {
+      removedInfo: infoExists && !fs.existsSync(paths.infoPath),
+      removedLock: lockExists && !fs.existsSync(paths.lockPath),
+    };
+  } finally {
+    release();
+  }
+}
+
+function sameDaemonProcessIdentity(
+  left: { pid: number; processStartTime?: string },
+  right: { pid: number; processStartTime?: string },
+): boolean {
+  const leftStart = left.processStartTime?.trim();
+  const rightStart = right.processStartTime?.trim();
+  return left.pid === right.pid && Boolean(leftStart) && leftStart === rightStart;
+}
+
+function daemonMetadataOwnershipChanged(
+  paths: Pick<DaemonPaths, 'infoPath' | 'lockPath'>,
+  phase: 'malformed_info' | 'info_owner_changed' | 'malformed_lock' | 'lock_owner_changed',
+): AppError {
+  return new AppError('COMMAND_FAILED', 'Daemon metadata ownership changed during takeover', {
+    reason: 'daemon_takeover_incomplete',
+    phase,
+    infoPath: paths.infoPath,
+    lockPath: paths.lockPath,
   });
 }
 
@@ -264,21 +348,30 @@ export function resolveDaemonStartupHint(
     process.env.AGENT_DEVICE_STATE_DIR,
   ),
 ): string {
-  const cleanupCommand = buildDaemonMetadataCleanupCommand(paths);
+  const recovery = buildDaemonMetadataRecoveryInstructions(paths);
   if (state.hasLock && !state.hasInfo) {
-    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.lockPath} still exists without ${paths.infoPath}. Retry with --debug; if this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
+    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.lockPath} still exists without ${paths.infoPath}. Retry with --debug. ${recovery}`;
   }
   if (state.hasLock && state.hasInfo) {
-    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.infoPath} and ${paths.lockPath} still remain. Retry with --debug; if this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
+    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.infoPath} and ${paths.lockPath} still remain. Retry with --debug. ${recovery}`;
   }
   if (state.hasInfo) {
-    return `agent-device did not observe reachable daemon metadata after retrying, and ${paths.infoPath} still remains. Stale metadata was cleaned automatically when safe; retry with --debug. If this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
+    return `agent-device did not observe reachable daemon metadata after retrying, and ${paths.infoPath} still remains. Stale metadata was cleaned automatically when safe; retry with --debug. ${recovery}`;
   }
-  return `agent-device did not observe reachable daemon metadata after retrying. Stale metadata was cleaned automatically when safe; retry with --debug and check daemon diagnostics logs. If stale metadata returns after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
+  return `agent-device did not observe reachable daemon metadata after retrying. Stale metadata was cleaned automatically when safe; retry with --debug and check daemon diagnostics logs. ${recovery}`;
 }
 
-function buildDaemonMetadataCleanupCommand(paths: Pick<DaemonPaths, 'infoPath' | 'lockPath'>) {
-  return `rm -f ${shellQuote(paths.infoPath)} ${shellQuote(paths.lockPath)}`;
+function buildDaemonMetadataRecoveryInstructions(
+  paths: Pick<DaemonPaths, 'infoPath' | 'lockPath'>,
+): string {
+  const guardPath = resolveDaemonLockMutationGuardPath(paths.lockPath);
+  const removeGuard = `rmdir ${shellQuote(guardPath)}`;
+  const removeMetadata = `rm -f ${shellQuote(paths.infoPath)} ${shellQuote(paths.lockPath)}`;
+  return (
+    `Only after confirming that no agent-device client or daemon is operating on this state ` +
+    `directory, remove an orphaned empty mutation guard with: ${removeGuard}. ` +
+    `Then remove stale daemon metadata with: ${removeMetadata}`
+  );
 }
 
 function readJsonFile(filePath: string): unknown | null {

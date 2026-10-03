@@ -404,7 +404,7 @@ test('resolveDevice refuses duplicate normalized names and recommends an identit
   const error = await resolveDevice([first, second], {
     platform: 'ios',
     deviceName: 'SHARED IPHONE',
-  }).catch((caught) => caught);
+  }).catch((error) => error);
 
   assert.ok(error instanceof AppError);
   assert.equal(error.code, 'AMBIGUOUS_MATCH');

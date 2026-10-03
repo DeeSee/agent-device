@@ -1,14 +1,20 @@
+import {
+  requireSessionOrExplicitSelector,
+  resolveCommandDevice,
+} from '../session-device-resolution.ts';
+import {
+  handleSessionReserveCommand,
+  handleSessionCloseCommands,
+  handleSessionInventoryCommands,
+  handleSessionOpenCommands,
+} from '../session-lifecycle/index.ts';
+import { handleAppContainerJsonWriteCommand } from './session-app-container-files.ts';
 import type { DaemonResponse } from '../daemon-request.ts';
 import { handleReleaseMaterializedPathsCommand } from './session-app-source-deployment.ts';
 import { handleRuntimeCommand } from './session-runtime-command.ts';
 import { handleKeyboardCommand, handleAppEventCommand } from './session-selector-dispatch.ts';
 import { handleSessionAppDeploymentCommand } from './session-app-deployment-route.ts';
 import { runBatchCommands } from './session-batch.ts';
-import {
-  handleSessionCloseCommands,
-  handleSessionInventoryCommands,
-  handleSessionOpenCommands,
-} from '../session-lifecycle/index.ts';
 import { handleSessionStateCommands } from './session-state.ts';
 import { handleSessionObservabilityCommands } from '../session-observability/index.ts';
 import { handleReplayCommand, handleReplayTestCommand } from './session-replay-command.ts';
@@ -107,6 +113,18 @@ const handleSessionObservabilityCommandGroup: SessionCommandHandler = async ({
  * clusters) map several keys to the SAME handler reference below.
  */
 const SESSION_COMMAND_HANDLER_IMPLS = {
+  app_container_write_json: async ({ req, sessionName, sessionStore, inspectFacts, bindDevice }) =>
+    await handleAppContainerJsonWriteCommand({
+      req,
+      resolveDevice: async () => {
+        const session = sessionStore.get(sessionName);
+        const missing = requireSessionOrExplicitSelector(req.command, session, req.flags);
+        return missing ?? (await resolveCommandDevice({ session, flags: req.flags }));
+      },
+      inspectFacts,
+      bindDevice,
+    }),
+  session_reserve: handleSessionReserveCommand,
   session_list: handleSessionInventoryCommandGroup,
   devices: handleSessionInventoryCommandGroup,
   capabilities: handleSessionInventoryCommandGroup,

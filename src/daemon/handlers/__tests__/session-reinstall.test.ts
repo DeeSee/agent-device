@@ -86,7 +86,7 @@ test('reinstall validates required args before runtime admission', async () => {
       token: 't',
       session: 'default',
       command: 'reinstall',
-      positionals: ['com.example.app'],
+      positionals: [],
       flags: {},
     },
     sessionName: 'default',
@@ -97,6 +97,53 @@ test('reinstall validates required args before runtime admission', async () => {
   expect(response).toMatchObject({ ok: false, error: { code: 'INVALID_ARGS' } });
   expect(mockInspectDeviceRuntimeFacts).not.toHaveBeenCalled();
   expect(mockBindDeviceRuntime).not.toHaveBeenCalled();
+});
+
+test('reinstall accepts one artifact path and returns the selected device identity', async () => {
+  const store = makeStore();
+  const session = makeSession('default', {
+    platform: 'apple',
+    appleOs: 'ios',
+    id: 'sim-1',
+    name: 'iPhone',
+    kind: 'simulator',
+    booted: true,
+  });
+  store.set(session.name, session);
+  const root = mkdtempForTestSync('agent-device-derived-reinstall-');
+  const appPath = path.join(root, 'Sample.app');
+  fs.writeFileSync(appPath, 'placeholder');
+  mockDeployAppRuntime.mockImplementation(async (input) => {
+    expect(input).toEqual({ app: '', appPath, replaceExisting: true });
+    return { bundleId: 'com.example.derived', launchTarget: 'com.example.derived' };
+  });
+  vi.mocked(resolveTargetDevice).mockResolvedValue(session.device);
+
+  const response = await handleSessionCommands({
+    req: {
+      token: 't',
+      session: session.name,
+      command: 'reinstall',
+      positionals: [appPath],
+      flags: {},
+    },
+    sessionName: session.name,
+    logPath: '/tmp/daemon.log',
+    sessionStore: store,
+    invoke,
+  });
+
+  expect(response).toMatchObject({
+    ok: true,
+    data: {
+      app: 'com.example.derived',
+      bundleId: 'com.example.derived',
+      platform: 'ios',
+      deviceId: 'sim-1',
+      deviceName: 'iPhone',
+    },
+  });
+  expect(mockDeployAppRuntime).toHaveBeenCalledOnce();
 });
 
 test('install binds the deployment use exactly once after one facts admission', async () => {

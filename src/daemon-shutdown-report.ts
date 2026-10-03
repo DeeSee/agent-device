@@ -4,6 +4,15 @@ import type { DeviceLease } from '@agent-device/contracts/device';
 import { publishFileSync } from '@agent-device/host-kit/file';
 
 const SHUTDOWN_REPORT_FILE = 'daemon-shutdown.json';
+export const DAEMON_SHUTDOWN_REPORT_SCHEMA_VERSION = 2 as const;
+
+export type DaemonShutdownIdentity = {
+  pid: number;
+  processStartTime: string;
+  version: string;
+  codeSignature: string;
+  deviceClaimRootId: string;
+};
 
 export type ProviderReleaseRecord = {
   leaseId: string;
@@ -28,6 +37,8 @@ export type DeviceClaimRecord = {
 };
 
 export type DaemonShutdownReport = {
+  schemaVersion: typeof DAEMON_SHUTDOWN_REPORT_SCHEMA_VERSION;
+  daemon: DaemonShutdownIdentity;
   providerReleases: {
     released: ProviderReleaseRecord[];
     pending: ProviderReleaseRecord[];
@@ -43,6 +54,7 @@ export type DaemonShutdownReport = {
 export function writeDaemonShutdownReport(
   stateDir: string,
   outcome: {
+    daemon: DaemonShutdownIdentity;
     providerReleases: { released: readonly DeviceLease[]; pending: readonly DeviceLease[] };
     claims: {
       released: readonly DeviceClaimRecord[];
@@ -53,6 +65,8 @@ export function writeDaemonShutdownReport(
   },
 ): void {
   const report: DaemonShutdownReport = {
+    schemaVersion: DAEMON_SHUTDOWN_REPORT_SCHEMA_VERSION,
+    daemon: outcome.daemon,
     providerReleases: {
       released: outcome.providerReleases.released.map(toProviderReleaseRecord),
       pending: outcome.providerReleases.pending.map(toProviderReleaseRecord),
@@ -81,13 +95,31 @@ export function writeDaemonShutdownReport(
 export function readDaemonShutdownReport(stateDir: string): DaemonShutdownReport | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(shutdownReportPath(stateDir), 'utf8')) as unknown;
-    if (!isProviderReleaseReport(parsed)) return null;
-    // A report left behind by a daemon that predates claim reporting still
-    // describes its provider releases honestly; it just knows nothing of claims.
-    return { ...parsed, claims: readClaimSection(parsed) };
+    return parseDaemonShutdownReport(parsed);
   } catch {
     return null;
   }
+}
+
+/** Strict v2 decoder. Pre-v2 and partially valid reports fail closed. */
+export function parseDaemonShutdownReport(value: unknown): DaemonShutdownReport | null {
+  if (!hasExactKeys(value, ['schemaVersion', 'daemon', 'providerReleases', 'claims'])) return null;
+  if (value.schemaVersion !== DAEMON_SHUTDOWN_REPORT_SCHEMA_VERSION) return null;
+  if (!isDaemonShutdownIdentity(value.daemon)) return null;
+  if (!hasExactKeys(value.providerReleases, ['released', 'pending'])) return null;
+  if (!hasExactKeys(value.claims, ['released', 'orphaned', 'superseded', 'unattributable']))
+    return null;
+  if (
+    !isRecordArray(value.providerReleases.released, isProviderReleaseRecord) ||
+    !isRecordArray(value.providerReleases.pending, isProviderReleaseRecord) ||
+    !isRecordArray(value.claims.released, isDeviceClaimRecord) ||
+    !isRecordArray(value.claims.orphaned, isDeviceClaimRecord) ||
+    !isRecordArray(value.claims.superseded, isDeviceClaimRecord) ||
+    !isRecordArray(value.claims.unattributable, isDeviceClaimRecord)
+  ) {
+    return null;
+  }
+  return value as DaemonShutdownReport;
 }
 
 export function clearDaemonShutdownReport(stateDir: string): void {
@@ -107,46 +139,8 @@ function toProviderReleaseRecord(lease: DeviceLease): ProviderReleaseRecord {
   };
 }
 
-function isProviderReleaseReport(
-  value: unknown,
-): value is Omit<DaemonShutdownReport, 'claims'> & { claims?: unknown } {
-  if (!value || typeof value !== 'object') return false;
-  const releases = (value as { providerReleases?: unknown }).providerReleases;
-  if (!releases || typeof releases !== 'object') return false;
-  const records = releases as { released?: unknown; pending?: unknown };
-  return (
-    Array.isArray(records.released) &&
-    Array.isArray(records.pending) &&
-    records.released.every(isProviderReleaseRecord) &&
-    records.pending.every(isProviderReleaseRecord)
-  );
-}
-
-function readClaimSection(value: { claims?: unknown }): DaemonShutdownReport['claims'] {
-  const claims = value.claims;
-  if (!claims || typeof claims !== 'object') {
-    return { released: [], orphaned: [], superseded: [], unattributable: [] };
-  }
-  const records = claims as {
-    released?: unknown;
-    orphaned?: unknown;
-    superseded?: unknown;
-    unattributable?: unknown;
-  };
-  return {
-    released: readClaimRecords(records.released),
-    orphaned: readClaimRecords(records.orphaned),
-    superseded: readClaimRecords(records.superseded),
-    unattributable: readClaimRecords(records.unattributable),
-  };
-}
-
-function readClaimRecords(value: unknown): DeviceClaimRecord[] {
-  return Array.isArray(value) ? value.filter(isDeviceClaimRecord) : [];
-}
-
 function isDeviceClaimRecord(value: unknown): value is DeviceClaimRecord {
-  if (!value || typeof value !== 'object') return false;
+  if (!hasExactKeys(value, ['deviceKey', 'session', 'platform', 'deviceId'])) return false;
   const record = value as Partial<Record<keyof DeviceClaimRecord, unknown>>;
   return (
     typeof record.deviceKey === 'string' &&
@@ -157,11 +151,59 @@ function isDeviceClaimRecord(value: unknown): value is DeviceClaimRecord {
 }
 
 function isProviderReleaseRecord(value: unknown): value is ProviderReleaseRecord {
-  if (!value || typeof value !== 'object') return false;
+  if (!hasOnlyKeys(value, ['leaseId', 'provider'], ['leaseId'])) return false;
   const record = value as { leaseId?: unknown; provider?: unknown };
   return (
     typeof record.leaseId === 'string' &&
     record.leaseId.trim().length > 0 &&
     (record.provider === undefined || typeof record.provider === 'string')
   );
+}
+
+function isDaemonShutdownIdentity(value: unknown): value is DaemonShutdownIdentity {
+  if (
+    !hasExactKeys(value, [
+      'pid',
+      'processStartTime',
+      'version',
+      'codeSignature',
+      'deviceClaimRootId',
+    ])
+  ) {
+    return false;
+  }
+  return (
+    typeof value.pid === 'number' &&
+    Number.isInteger(value.pid) &&
+    value.pid > 0 &&
+    isNonBlank(value.processStartTime) &&
+    isNonBlank(value.version) &&
+    isNonBlank(value.codeSignature) &&
+    isNonBlank(value.deviceClaimRootId)
+  );
+}
+
+function isRecordArray<T>(value: unknown, guard: (entry: unknown) => entry is T): value is T[] {
+  return Array.isArray(value) && value.every(guard);
+}
+
+function hasExactKeys<K extends string>(
+  value: unknown,
+  keys: readonly K[],
+): value is Record<K, unknown> {
+  return hasOnlyKeys(value, keys, keys);
+}
+
+function hasOnlyKeys<K extends string>(
+  value: unknown,
+  allowed: readonly K[],
+  required: readonly K[],
+): value is Partial<Record<K, unknown>> & Record<K, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return actual.every((key) => allowed.includes(key as K)) && required.every((key) => key in value);
+}
+
+function isNonBlank(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }

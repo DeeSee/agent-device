@@ -276,7 +276,7 @@ replaced by declarations on the command descriptors (ADR 0008 registry):
 ```ts
 timeoutPolicy: {
   budget: { source: 'flag' | 'positional-parser' | 'none'; parser?: string };
-  onTimeout: 'preserve-daemon' | 'reset-daemon';
+  onTimeout: 'preserve-daemon' | 'preserve-daemon-and-runner' | 'reset-daemon';
 }
 ```
 

@@ -1,3 +1,8 @@
+import {
+  currentTestDeviceClaimRoot,
+  isolatedDeviceClaimStores,
+  retainOrphanedDeviceClaims,
+} from '../../../src/__tests__/test-utils/device-claim-store.ts';
 import { vi } from 'vitest';
 import type { ManagedLease } from '@agent-device/contracts/managed-device-allocation';
 import {
@@ -9,10 +14,6 @@ import { gatewayFixtureScope } from '../../../src/platform-runtime-gateway.fixtu
 import { createComposedPlatformRuntimeGateway } from '../../../src/platform-runtime-gateway.ts';
 import { platformRuntimeModules } from '../../../src/platform-runtime.ts';
 import { managedAutomationHost } from './managed-runtime-automation.fixtures.ts';
-import {
-  isolatedDeviceClaimStores,
-  retainOrphanedDeviceClaims,
-} from '../../../src/__tests__/test-utils/device-claim-store.ts';
 import { createDeviceClaimAdmission } from '../../../src/daemon/device/device-claim-admission.ts';
 import { acquireAllocatorHeldDeviceClaim } from '../../../src/daemon/device/device-claim-allocator.ts';
 import { createRequestRuntimeBindings } from '../../../src/daemon/request-runtime-binding.ts';
@@ -139,6 +140,9 @@ export async function setupRequest(
     },
   };
   const claims = createDeviceClaimAdmission({
+    resolveSession: () => undefined,
+    sessionName: 'default',
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     policy: 'observe',
     command: 'clipboard',
     workspace: stateDir,
@@ -147,6 +151,7 @@ export async function setupRequest(
   });
   if (!options.missingClaim)
     await acquireAllocatorHeldDeviceClaim({
+      deviceClaimRoot: currentTestDeviceClaimRoot(),
       device: reachability.device,
       principal: {
         stateDir,

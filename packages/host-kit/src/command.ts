@@ -18,6 +18,7 @@ export {
   runCmdBackground,
   runCmdDetached,
   runCmdDetachedMonitored,
+  runCmdDetachedRetained,
   runCmdStreaming,
   runCmdSync,
   whichCmd,

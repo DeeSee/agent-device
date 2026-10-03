@@ -1,3 +1,4 @@
+import { assertDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DeviceInfo } from '@agent-device/kernel/device';
@@ -58,18 +59,19 @@ export type AllocatorHeldClaimAdmission =
  */
 export function requireAllocatorHeldDeviceClaim(params: {
   device: DeviceInfo;
+  deviceClaimRoot: DeviceClaimRoot;
   owner: RuntimeOwnerRef;
   stateDir: string;
   intent: DeviceBindingIntent;
 }): AllocatorHeldClaimAdmission {
-  const { device, owner, stateDir, intent } = params;
+  const { device, owner, stateDir, intent, deviceClaimRoot } = params;
   const binding =
     intent.kind === 'exact-owner' && sameRuntimeOwner(intent.owner, owner)
       ? decodeManagedBindingFence(intent.fence)
       : null;
   if (!binding) return { status: 'binding-invalid' };
   const deviceKey = canonicalLocalDeviceKey(deviceClaimIdentity(device));
-  const existing = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey));
+  const existing = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey, deviceClaimRoot));
   if (!existing) return { status: 'missing' };
   const held = existing.allocatorClaim;
   if (
@@ -89,9 +91,12 @@ export function requireAllocatorHeldDeviceClaim(params: {
  * owner may not execute against a managed identity at all, whoever holds it. Every device binding
  * asks this, so it reads the record and stops — no owner-liveness probe.
  */
-export function inspectAllocatorHeldDeviceClaim(device: DeviceInfo): InspectedDeviceClaim | null {
+export function inspectAllocatorHeldDeviceClaim(
+  device: DeviceInfo,
+  deviceClaimRoot: DeviceClaimRoot,
+): InspectedDeviceClaim | null {
   const deviceKey = canonicalLocalDeviceKey(deviceClaimIdentity(device));
-  return readAllocatorHeldClaimFile(resolveDeviceClaimPath(deviceKey));
+  return readAllocatorHeldClaimFile(resolveDeviceClaimPath(deviceKey, deviceClaimRoot));
 }
 
 /** What {@link acquireAllocatorHeldDeviceClaim} did with the store. */
@@ -109,32 +114,36 @@ export type AllocatorHeldClaimAcquireResult =
 // Production caller: the allocator activation unit; the foundations ship the claim kind first.
 export async function acquireAllocatorHeldDeviceClaim(params: {
   device: DeviceInfo;
+  deviceClaimRoot: DeviceClaimRoot;
   principal: AllocatorHeldClaimPrincipal;
 }): Promise<AllocatorHeldClaimAcquireResult> {
-  const { device, principal } = params;
+  const { device, principal, deviceClaimRoot } = params;
   const identity = deviceClaimIdentity(device);
   const deviceKey = canonicalLocalDeviceKey(identity);
-  return await withDeviceClaimLock(deviceKey, async () => {
-    const existing = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey));
+  return await withDeviceClaimLock(deviceKey, deviceClaimRoot, async () => {
+    const existing = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey, deviceClaimRoot));
     const held = existing?.allocatorClaim;
     if (existing && !(held && samePrincipal(held, principal))) {
       emitClaimConflict(deviceKey, existing);
       return { status: 'conflict', conflict: existing };
     }
     const now = Date.now();
-    writeDeviceClaim({
-      schemaVersion: ALLOCATOR_HELD_CLAIM_SCHEMA_VERSION,
-      kind: 'allocator',
-      deviceKey,
-      device: { ...identity, name: device.name },
-      stateDir: principal.stateDir,
-      allocator: {
-        instanceId: principal.instanceId,
-        identityIncarnationId: principal.identityIncarnationId,
+    writeDeviceClaim(
+      {
+        schemaVersion: ALLOCATOR_HELD_CLAIM_SCHEMA_VERSION,
+        kind: 'allocator',
+        deviceKey,
+        device: { ...identity, name: device.name },
+        stateDir: principal.stateDir,
+        allocator: {
+          instanceId: principal.instanceId,
+          identityIncarnationId: principal.identityIncarnationId,
+        },
+        createdAtMs: held?.createdAtMs ?? now,
+        updatedAtMs: now,
       },
-      createdAtMs: held?.createdAtMs ?? now,
-      updatedAtMs: now,
-    });
+      deviceClaimRoot,
+    );
     return { status: held ? 'reattached' : 'acquired' };
   });
 }
@@ -148,18 +157,21 @@ export async function acquireAllocatorHeldDeviceClaim(params: {
 // kind first.
 export async function releaseAllocatorHeldClaim(params: {
   device: DeviceInfo;
+  deviceClaimRoot: DeviceClaimRoot;
   removalProof: AllocatorHeldClaimPrincipal;
 }): Promise<'released' | 'absent' | 'ownership-changed'> {
-  const { device, removalProof } = params;
+  const { device, removalProof, deviceClaimRoot } = params;
   const deviceKey = canonicalLocalDeviceKey(deviceClaimIdentity(device));
-  return await withDeviceClaimLock(deviceKey, async () => {
-    const claimPath = resolveDeviceClaimPath(deviceKey);
+  return await withDeviceClaimLock(deviceKey, deviceClaimRoot, async () => {
+    const claimPath = resolveDeviceClaimPath(deviceKey, deviceClaimRoot);
     const existing = inspectDeviceClaimFile(claimPath);
     if (!existing) return 'absent';
     const held = existing.allocatorClaim;
     if (!held || !samePrincipal(held, removalProof)) return 'ownership-changed';
     try {
+      assertDeviceClaimRoot(deviceClaimRoot);
       fs.unlinkSync(claimPath);
+      assertDeviceClaimRoot(deviceClaimRoot);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       return 'absent';

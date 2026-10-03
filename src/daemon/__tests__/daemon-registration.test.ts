@@ -29,14 +29,30 @@ function infoPathOf(stateDir: string): string {
 
 test('reads back the identity a running daemon publishes for its state dir', () => {
   const stateDir = useStateDir();
-  writeInfo(stateDir, infoPathOf(stateDir), path.join(stateDir, 'daemon.log'), {
-    socketPort: 1234,
-    token: 'token',
-    codeOrigin: 'checkout',
-    version: '0.0.0-test',
-    codeSignature: 'signature',
-    processStartTime: 'published-start',
-  });
+  fs.writeFileSync(
+    path.join(stateDir, 'daemon.lock'),
+    JSON.stringify({
+      pid: process.pid,
+      processStartTime: 'published-start',
+      version: 'test',
+      startedAt: 1,
+    }),
+  );
+  writeInfo(
+    stateDir,
+    infoPathOf(stateDir),
+    path.join(stateDir, 'daemon.lock'),
+    path.join(stateDir, 'daemon.log'),
+    {
+      deviceClaimRootId: 'test-root',
+      socketPort: 1234,
+      token: 'token',
+      codeOrigin: 'checkout',
+      version: '0.0.0-test',
+      codeSignature: 'signature',
+      processStartTime: 'published-start',
+    },
+  );
 
   assert.deepEqual(readRegisteredDaemonIdentity(infoPathOf(stateDir)), {
     pid: process.pid,

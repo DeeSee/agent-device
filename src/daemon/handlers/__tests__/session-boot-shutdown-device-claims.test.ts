@@ -11,12 +11,13 @@ import { normalizeError } from '@agent-device/kernel/errors';
 import { ANDROID_EMULATOR } from '../../../__tests__/test-utils/device-fixtures.ts';
 import {
   isolatedDeviceClaimStores,
+  currentTestDeviceClaimRoot,
+  inspectTestDeviceClaims as inspectDeviceClaims,
   retainOrphanedDeviceClaims,
 } from '../../../__tests__/test-utils/device-claim-store.ts';
 import { SessionStore } from '../../session-store.ts';
 import { LeaseRegistry } from '../../lease-registry.ts';
 import { acquireDeviceClaim } from '../../device/device-claims.ts';
-import { inspectDeviceClaims } from '../../device/device-claim-inspection.ts';
 import { createRequestExecutionScope } from '../../request-execution-scope.ts';
 import { handleSessionStateCommands } from '../session-state.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
@@ -43,6 +44,7 @@ async function claimForeignDaemon(root: string): Promise<string> {
     session: 'owner-session',
     workspace: '/worktrees/daemon-a',
     stateDir: ownerStateDir,
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     reconcileOrphanedDeviceClaim: retainOrphanedDeviceClaims,
   });
   expect(acquired.status).toBe('acquired');

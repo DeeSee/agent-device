@@ -31,6 +31,7 @@ import {
   type SessionScriptWriteResult,
 } from './session-script-writer.ts';
 import { successText } from '@agent-device/kernel/success-text';
+import { openDeviceClaimRoot, type DeviceClaimRoot } from '../device-claim-root.ts';
 import {
   appendActionEvent,
   appendSessionEvent,
@@ -47,10 +48,12 @@ export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
   private readonly runtimeHints = new Map<string, SessionRuntimeHints>();
   private readonly sessionsDir: string;
+  private readonly deviceClaimRoot: DeviceClaimRoot;
   private readonly scriptWriter: SessionScriptWriter;
 
-  constructor(sessionsDir: string) {
+  constructor(sessionsDir: string, options: { deviceClaimRoot?: DeviceClaimRoot } = {}) {
     this.sessionsDir = sessionsDir;
+    this.deviceClaimRoot = options.deviceClaimRoot ?? openDeviceClaimRoot();
     this.scriptWriter = new SessionScriptWriter(sessionsDir);
   }
 
@@ -79,6 +82,15 @@ export class SessionStore {
     const occupying = this.sessions.has(name);
     this.sessions.set(name, session);
     if (!occupying) this.clearIdleExpiryTombstone(name);
+  }
+
+  /** Retains the exact public owner while close teardown remains unconfirmed. */
+  markCloseRetryRequired(name: string, fallback: SessionState): void {
+    const retained = this.sessions.get(name) ?? fallback;
+    this.sessions.set(name, {
+      ...retained,
+      closeRecovery: { state: 'retry-required' },
+    });
   }
 
   delete(name: string): boolean {
@@ -401,6 +413,10 @@ export class SessionStore {
   // session-lifecycle/internal/session-close.ts.
   resolveDaemonStateDir(): string {
     return path.dirname(this.sessionsDir);
+  }
+
+  resolveDeviceClaimRoot(): DeviceClaimRoot {
+    return this.deviceClaimRoot;
   }
 
   ensureSessionDir(sessionName: string): string {

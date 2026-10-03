@@ -4,6 +4,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 
 const lifecycleEvents = vi.hoisted(() => [] as string[]);
+const startupReconciliation = vi.hoisted(() => ({
+  run: async (..._args: unknown[]) => ({ examined: 0, reconciled: 0, retained: 0, changed: 0 }),
+}));
 
 vi.mock('../../platform-runtime.ts', () => ({
   androidObservation: {},
@@ -46,10 +49,93 @@ vi.mock('../../provider-device-runtimes.ts', () => ({
   createDefaultProviderRuntimeComposition: async () => ({ runtimes: [], platformModules: [] }),
 }));
 
+vi.mock('../device/device-claims.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../device/device-claims.ts')>();
+  return {
+    ...original,
+    reconcileOrphanedDeviceClaims: (...args: unknown[]) => startupReconciliation.run(...args),
+  };
+});
+
 import { startDaemonRuntime } from './daemon-runtime.ts';
 
 afterEach(() => {
   lifecycleEvents.length = 0;
+  startupReconciliation.run = async () => ({
+    examined: 0,
+    reconciled: 0,
+    retained: 0,
+    changed: 0,
+  });
+  vi.restoreAllMocks();
+});
+
+test('defers a published-daemon signal until startup reconciliation settles', async () => {
+  const stateDir = mkdtempForTestSync('agent-device-daemon-signal-readiness-');
+  let sigterm: (() => void) | undefined;
+  let releaseReconciliation: (() => void) | undefined;
+  let reconciliationStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    reconciliationStarted = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    releaseReconciliation = resolve;
+  });
+  const exits: number[] = [];
+  let resolveExit: (() => void) | undefined;
+  const exited = new Promise<void>((resolve) => {
+    resolveExit = resolve;
+  });
+  startupReconciliation.run = async () => {
+    lifecycleEvents.push('reconcile-start');
+    reconciliationStarted?.();
+    await held;
+    lifecycleEvents.push('reconcile-end');
+    return { examined: 0, reconciled: 0, retained: 0, changed: 0 };
+  };
+  vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+    if (event === 'SIGTERM') sigterm = listener as () => void;
+    return process;
+  });
+
+  try {
+    const runtime = startDaemonRuntime({
+      env: {
+        ...process.env,
+        AGENT_DEVICE_STATE_DIR: stateDir,
+        AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: '0',
+        AGENT_DEVICE_DAEMON_SERVER_MODE: 'http',
+      },
+      exit: (code) => {
+        exits.push(code);
+        resolveExit?.();
+      },
+      stderr: { write: () => {} },
+      stdout: {
+        write: () => {
+          expect(sigterm).toBeDefined();
+        },
+      },
+    });
+    await started;
+    sigterm?.();
+    await Promise.resolve();
+    expect(lifecycleEvents).toEqual(['reconcile-start']);
+
+    releaseReconciliation?.();
+    expect(await runtime).not.toBeNull();
+    await exited;
+    expect(lifecycleEvents).toEqual([
+      'reconcile-start',
+      'reconcile-end',
+      'detach',
+      'gateway-shutdown',
+      'finalize',
+    ]);
+    expect(exits).toEqual([0]);
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test('daemon shutdown detaches before session teardown and force-finalizes only after gateway resources', async () => {

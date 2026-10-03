@@ -18,7 +18,6 @@ import { resolveCliOptions } from '../cli/resolve-cli-options.ts';
 import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
 import { createStubClientLeases } from './test-utils/client-lease-fixtures.ts';
 
-// #1802: the replay client reads the script it names, so CLI-level replay cases need a real file.
 const REPLAY_SCRIPT_ROOT = mkdtempForTestSync('agent-device-cli-replay-scripts-');
 
 function writeReplayScript(name: string): string {
@@ -1150,7 +1149,6 @@ async function captureOutput(
 
   return { stdout, stderr };
 }
-
 function createStubClient(params: {
   installFromSource: AgentDeviceClient['apps']['installFromSource'];
   listApps?: AgentDeviceClient['apps']['list'];
@@ -1164,9 +1162,9 @@ function createStubClient(params: {
   const unexpectedCommandCall = async (): Promise<never> => {
     throw new Error('unexpected command call');
   };
-  const command = createThrowingMethodGroup<AgentDeviceClient['command']>();
   return {
-    command,
+    daemon: { stop: unexpectedCommandCall },
+    command: createThrowingMethodGroup<AgentDeviceClient['command']>(),
     devices: {
       list: async () => [],
       capabilities: unexpectedCommandCall,
@@ -1174,6 +1172,7 @@ function createStubClient(params: {
       shutdown: unexpectedCommandCall,
     },
     sessions: {
+      reserve: unexpectedCommandCall,
       list: async () => [],
       stateDir: async () => '/tmp/agent-device-state',
       close: async () => ({ session: 'default', identifiers: { session: 'default' } }),
@@ -1207,6 +1206,7 @@ function createStubClient(params: {
       }),
       push: unexpectedCommandCall,
       triggerEvent: unexpectedCommandCall,
+      files: { writeJson: unexpectedCommandCall },
     },
     materializations: {
       release: async (options) => ({
@@ -1250,7 +1250,7 @@ function createStubClient(params: {
           transport: 'http' as const,
         })),
     },
-    capture: {
+    capture: createThrowingMethodGroup<AgentDeviceClient['capture']>({
       snapshot: async () => ({
         nodes: [],
         truncated: false,
@@ -1262,8 +1262,7 @@ function createStubClient(params: {
           path: '/tmp/screenshot.png',
           identifiers: { session: 'default' },
         })),
-      diff: unexpectedCommandCall,
-    },
+    }),
     interactions: createThrowingMethodGroup<AgentDeviceClient['interactions']>(),
     replay: createThrowingMethodGroup<AgentDeviceClient['replay']>(),
     batch: createThrowingMethodGroup<AgentDeviceClient['batch']>(),
@@ -1279,11 +1278,11 @@ function createStubClient(params: {
   };
 }
 
-function createThrowingMethodGroup<T extends object>(): T {
+function createThrowingMethodGroup<T extends object>(target: Partial<T> = {}): T {
   const unexpectedCommandCall = async (): Promise<never> => {
     throw new Error('unexpected command call');
   };
-  return new Proxy({} as Partial<T>, {
+  return new Proxy(target, {
     get: (target, property) => target[property as keyof T] ?? unexpectedCommandCall,
   }) as T;
 }

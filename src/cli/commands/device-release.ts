@@ -1,3 +1,4 @@
+import { openDeviceClaimRoot } from '../../device-claim-root.ts';
 import {
   createOwnerScopedDeviceClaimReconciler,
   type OwnerScopedClaimRecoveryComposer,
@@ -22,6 +23,7 @@ export async function runStaleDeviceClaimRelease(
 ): Promise<DeviceClaimStaleReleaseOutcome[]> {
   return await releaseProvenStaleDeviceClaims({
     selectors,
+    deviceClaimRoot: openDeviceClaimRoot(),
     reconcile: createOwnerScopedDeviceClaimReconciler(
       createDaemonRecoveryPlatformScope(),
       composeRecovery,

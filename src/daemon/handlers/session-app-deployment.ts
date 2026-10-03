@@ -40,6 +40,8 @@ type DeployResult = Readonly<{
   packageName?: string;
   launchTarget?: string;
   platform: 'ios' | 'android' | 'harmonyos';
+  deviceId: string;
+  deviceName: string;
 }>;
 
 export async function handleAppDeploymentCommand(params: {
@@ -156,17 +158,17 @@ function buildDeployResult(
   deployment: AppDeploymentResult,
 ): DeployResult {
   // This response normalization remains daemon-owned; platform runtimes own the mechanics.
-  if (isIosFamily(device)) {
-    return buildIosDeployResult(app, appPath, deployment);
-  }
-  return buildNonIosDeployResult(device, app, appPath, deployment);
+  const result = isIosFamily(device)
+    ? buildIosDeployResult(app, appPath, deployment)
+    : buildNonIosDeployResult(device, app, appPath, deployment);
+  return { ...result, deviceId: device.id, deviceName: device.name };
 }
 
 function buildIosDeployResult(
   app: string,
   appPath: string,
   deployment: AppDeploymentResult,
-): DeployResult {
+): Omit<DeployResult, 'deviceId' | 'deviceName'> {
   const bundleId = deployment.bundleId;
   return {
     app: app || bundleId || deployment.launchTarget || appPath,
@@ -183,7 +185,7 @@ function buildNonIosDeployResult(
   app: string,
   appPath: string,
   deployment: AppDeploymentResult,
-): DeployResult {
+): Omit<DeployResult, 'deviceId' | 'deviceName'> {
   const packageName = deployment.packageName;
   const platform = device.platform === 'harmonyos' ? 'harmonyos' : 'android';
   return {
@@ -226,15 +228,13 @@ function resolveDeployTarget(
     }
     return { ok: true, app: second ? (first ?? '') : '', appPathInput };
   }
-  if (!first || !second) {
+  if (!first) {
     return {
       ok: false,
-      response: errorResponse(
-        'INVALID_ARGS',
-        'reinstall requires: reinstall <app> <path-to-app-binary>',
-      ),
+      response: errorResponse('INVALID_ARGS', 'reinstall requires a path-to-app-binary'),
     };
   }
+  if (!second) return { ok: true, app: '', appPathInput: first };
   return { ok: true, app: first, appPathInput: second };
 }
 

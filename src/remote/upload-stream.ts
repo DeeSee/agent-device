@@ -70,7 +70,9 @@ async function streamFileToHttpRequestAttempt(options: {
   // This module sits in the CLI's eager import closure via the remote-artifact
   // upload client, but only a remote daemon ever uploads, so the HTTP stack
   // loads here rather than at import time.
+  options.signal?.throwIfAborted();
   const transport = await loadNodeHttpRequester(options.url.protocol);
+  options.signal?.throwIfAborted();
   const payloadSize = fs.statSync(options.payloadPath).size;
   const headers = buildUploadRequestHeaders(options.headers, options.startOffset, payloadSize);
   emitUploadAttemptStarted(options.progress, options.startOffset, payloadSize);
@@ -198,6 +200,7 @@ async function streamFileToHttpRequestAttempt(options: {
         onProgress: options.progress?.onProgress,
       }),
       req,
+      { signal: options.signal },
     ).catch((err: unknown) => {
       if (responseReceived) return;
       req.destroy();

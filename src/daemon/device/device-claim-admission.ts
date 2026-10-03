@@ -1,3 +1,6 @@
+import { assertDeviceClaimRoot, type DeviceClaimRoot } from '../../device-claim-root.ts';
+import type { SessionState } from '../session-state.ts';
+import { assertSessionDeviceClaim } from './device-claim-authority.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type {
   DeviceBindingIntent,
@@ -47,6 +50,9 @@ export type DeviceClaimAdmission = AsyncDisposable &
 export function createDeviceClaimAdmission(params: {
   policy: DeviceClaimPolicy;
   command: string;
+  sessionName: string;
+  deviceClaimRoot: DeviceClaimRoot;
+  resolveSession: () => SessionState | undefined;
   workspace: string;
   stateDir: string;
   reconcileOrphanedDeviceClaim: DeviceClaimReconciler;
@@ -66,15 +72,28 @@ export function createDeviceClaimAdmission(params: {
    * lifecycles instead.
    */
   async function admitOrdinaryOwner(device: DeviceInfo): Promise<void> {
+    assertDeviceClaimRoot(params.deviceClaimRoot);
     if (params.policy === 'none') return;
-    const allocatorHeld = inspectAllocatorHeldDeviceClaim(device);
+    const allocatorHeld = inspectAllocatorHeldDeviceClaim(device, params.deviceClaimRoot);
     if (allocatorHeld) throw deviceClaimConflictError(device, allocatorHeld);
     if (params.policy !== 'transient-exclusive') return;
+    const session = params.resolveSession();
+    if (session) {
+      await assertSessionDeviceClaim({
+        device,
+        session: params.sessionName,
+        stateDir: params.stateDir,
+        ownership: session.deviceClaim,
+        deviceClaimRoot: params.deviceClaimRoot,
+      });
+      return;
+    }
     const result = await acquireTransientDeviceClaim({
       device,
       command: params.command,
       workspace: params.workspace,
       stateDir: params.stateDir,
+      deviceClaimRoot: params.deviceClaimRoot,
       reconcileOrphanedDeviceClaim: params.reconcileOrphanedDeviceClaim,
     });
     if (result.status === 'conflict') throw deviceClaimConflictError(device, result.conflict);
@@ -90,7 +109,13 @@ export function createDeviceClaimAdmission(params: {
           const decision = decideAllocatorHeldAdmission(
             device,
             owner,
-            requireAllocatorHeldDeviceClaim({ device, owner, stateDir: params.stateDir, intent }),
+            requireAllocatorHeldDeviceClaim({
+              device,
+              owner,
+              stateDir: params.stateDir,
+              intent,
+              deviceClaimRoot: params.deviceClaimRoot,
+            }),
           );
           if (!decision.admitted) throw decision.error;
           return;
@@ -102,7 +127,7 @@ export function createDeviceClaimAdmission(params: {
     [Symbol.asyncDispose]: async () => {
       for (const ownership of acquired.splice(0)) {
         try {
-          await clearDeviceClaim(ownership);
+          await clearDeviceClaim(ownership, params.deviceClaimRoot);
         } catch (error) {
           emitDiagnostic({
             level: 'error',

@@ -55,6 +55,7 @@ export function limrunAppDeploymentFacts(
   materializeAppSource: RuntimeOperationFact;
   deployMaterializedApp: RuntimeOperationFact;
   sendPushNotification: RuntimeOperationFact;
+  writeAppContainerJson: RuntimeOperationFact;
 }> {
   const deployment = limrunDeploymentFact(options, device);
   return Object.freeze({
@@ -64,6 +65,7 @@ export function limrunAppDeploymentFacts(
     sendPushNotification: isActiveLimrunRuntimeSession(options, device)
       ? pushUnavailable
       : deploymentUnavailable,
+    writeAppContainerJson: pushUnavailable,
   });
 }
 

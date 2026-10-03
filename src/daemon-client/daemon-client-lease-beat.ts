@@ -11,7 +11,7 @@ import {
   leaseScopeToRequestMeta,
   type LeaseScope,
 } from '@agent-device/contracts/lease-scope';
-import type { DaemonClientSettings } from './daemon-client-lifecycle.ts';
+import type { DaemonClientSettings } from './daemon-client-settings.ts';
 import { isRemoteDaemon, type DaemonInfo } from './daemon-client-metadata.ts';
 import { sendRequest } from './daemon-client-transport.ts';
 

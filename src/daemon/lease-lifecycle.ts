@@ -89,17 +89,19 @@ export async function cleanupExpiredLeasedSession(params: {
       },
     });
   });
-  await clearDeviceClaim(session.deviceClaim).catch((error) => {
-    emitDiagnostic({
-      level: 'warn',
-      phase: 'leased_session_expiry_device_claim_clear_failed',
-      data: {
-        session: session.name,
-        deviceKey: session.deviceClaim?.deviceKey,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-  });
+  await clearDeviceClaim(session.deviceClaim, params.sessionStore.resolveDeviceClaimRoot()).catch(
+    (error) => {
+      emitDiagnostic({
+        level: 'warn',
+        phase: 'leased_session_expiry_device_claim_clear_failed',
+        data: {
+          session: session.name,
+          deviceKey: session.deviceClaim?.deviceKey,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    },
+  );
   params.sessionStore.delete(session.name);
   return true;
 }

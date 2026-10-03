@@ -18,6 +18,20 @@ The closed-result batch covers:
 Their canonical result types live in `src/contracts`, feed `CommandResultMap`, and have matching MCP
 output schemas.
 
+`capture.screenshotArtifact` captures a local screenshot in a private temporary directory, returns
+bounded image bytes and the ordinary screenshot metadata, then removes the file and directory.
+It accepts neither `path` nor `responseLevel`. Remote captures use the daemon artifact transport.
+
+The Node client also accepts a request `signal` for cancellation. `sessions.reserve` claims an exact
+local target before launching an app; `sessions.open` consumes that reservation and `sessions.close`
+releases it. `apps.reinstall` can derive the app identity from its artifact. `apps.files.writeJson`
+writes verified JSON inside an Apple app data container.
+
+`daemon.stop` requires explicit local `stateDir` and `deviceClaimsDir` construction options. It requests
+a graceful stop and reports whether cleanup was confirmed for that exact daemon. A timed-out stop
+keeps the daemon running and can be retried. A failed session close retains the session for a close
+retry; other commands refuse that session until recovery finishes.
+
 The remaining broad methods are deliberate:
 
 - `command.alert` and `command.reactNative` spread platform/interaction-specific data.

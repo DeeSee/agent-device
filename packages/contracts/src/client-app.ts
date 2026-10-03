@@ -44,7 +44,8 @@ export type AppInstallOptions = AgentDeviceRequestOverrides &
 
 export type AppDeployOptions = AgentDeviceRequestOverrides &
   AgentDeviceSelectionOptions & {
-    app: string;
+    /** Optional for reinstall: derive the exact identity from the artifact first. */
+    app?: string;
     appPath: string;
   };
 
@@ -179,6 +180,21 @@ export type AppListOptions = AgentDeviceRequestOverrides &
   AgentDeviceSelectionOptions & {
     appsFilter?: AppsFilter;
   };
+
+export type AppContainerWriteJsonOptions = AgentDeviceRequestOverrides &
+  AgentDeviceSelectionOptions & {
+    app: string;
+    containerPath: string;
+    value: JsonObject;
+  };
+
+export type AppContainerWriteJsonResult = {
+  appId: string;
+  containerPath: string;
+  sha256: string;
+  byteLength: number;
+  verified: true;
+};
 
 export type AppPushOptions = DeviceCommandBaseOptions & {
   app: string;

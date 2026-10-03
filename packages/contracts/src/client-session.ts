@@ -6,6 +6,8 @@ import type { AgentDeviceIdentifiers, AgentDeviceRequestOverrides } from './clie
 
 export type SessionCloseResult = {
   session: string;
+  /** Whether this call closed the session or confirmed it was already absent. */
+  disposition?: 'closed' | 'already_absent';
   shutdown?: TargetShutdownResult;
   provider?: CloudProviderSessionResult;
   /**

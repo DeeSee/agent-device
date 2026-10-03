@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { beforeEach, expect, test, vi } from 'vitest';
 import { createDurableResourceEnvelope } from '@agent-device/capture-kit';
 import { applicationLifecycleOperationFacts } from '@agent-device/contracts/application-lifecycle-runtime';
 import {
@@ -15,6 +15,17 @@ import { createDeviceClaimReconciler } from '../device-claim-reconciliation.ts';
 import type { AllocatorHeldDeviceClaim, DeviceClaim } from '../device-claim-record.ts';
 import type { DeviceClaimReconciler } from '../device-claims.ts';
 import { appLogResourceStore } from '../../app-log-resource-store.ts';
+
+const orphan = vi.hoisted(() => ({ reconcile: vi.fn() }));
+
+vi.mock('../../../platform-runtime-screen-recording-apple-runner-transport.ts', () => ({
+  reconcileLocalAppleRunnerRecordingOrphan: orphan.reconcile,
+}));
+
+beforeEach(() => {
+  orphan.reconcile.mockReset();
+  orphan.reconcile.mockResolvedValue('missing');
+});
 
 const scope = {
   signal: new AbortController().signal,
@@ -136,6 +147,35 @@ test('unreattachable resource evidence retains the claim without binding', async
   });
   expect(bind).not.toHaveBeenCalled();
   expect(fs.readFileSync(resourcePath, 'utf8')).toBe('{');
+});
+
+test('reconciles an Apple runner orphan only after durable resources are absent', async () => {
+  const stateDir = mkdtempForTestSync('device-claim-reconcile-runner-orphan-');
+  const claim: DeviceClaim = {
+    ...makeClaim(stateDir),
+    deviceKey: 'local:apple:none:physical-device',
+    device: {
+      family: 'apple',
+      appleOs: 'ios',
+      id: 'physical-device',
+      name: 'iPhone',
+      kind: 'device',
+    },
+  };
+  const gateway = {
+    bind: vi.fn(),
+    shutdown: async () => {},
+  } as unknown as DeviceRuntimeGateway<PlatformRuntimeOperations>;
+
+  await expect(createDeviceClaimReconciler({ gateway, scope })(claim)).resolves.toEqual({
+    status: 'reconciled',
+  });
+
+  expect(orphan.reconcile).toHaveBeenCalledWith(
+    { ...claim.device, platform: 'apple' },
+    scope.signal,
+  );
+  expect(gateway.bind).not.toHaveBeenCalled();
 });
 
 const unavailable = Object.freeze({

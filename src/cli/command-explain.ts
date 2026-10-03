@@ -45,7 +45,7 @@ export type CommandExplanation = {
   };
   timeout: {
     envelopeMs: number | 'unbounded';
-    onTimeout: 'preserve-daemon' | 'reset-daemon';
+    onTimeout: 'preserve-daemon' | 'preserve-daemon-and-runner' | 'reset-daemon';
     budget: string;
   };
   cli?: {

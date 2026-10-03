@@ -121,9 +121,30 @@ test('normalizeSession carries the additive appleOs discriminant on the session 
     id: 'tv-sim-1',
     device: 'Apple TV',
     target: 'tv',
+    lifecycle: 'opened',
+    appBundleId: 'com.example.tv',
   });
   assert.equal(session.device.appleOs, 'tvos');
   assert.equal(session.device.platform, 'ios');
+  assert.equal(session.lifecycle, 'opened');
+  assert.equal(session.appBundleId, 'com.example.tv');
+  assert.equal(session.identifiers.appBundleId, 'com.example.tv');
+  assert.equal(session.device.identifiers.appBundleId, undefined);
+});
+
+test('normalizeSession rejects an unknown lifecycle instead of guessing', () => {
+  assert.throws(
+    () =>
+      normalizeSession({
+        name: 'default',
+        createdAt: 1,
+        platform: 'ios',
+        id: 'device-1',
+        device: 'iPhone',
+        lifecycle: 'wedged',
+      }),
+    /invalid session lifecycle/,
+  );
 });
 
 test('normalizeOpenDevice preserves iOS identifier shaping', () => {

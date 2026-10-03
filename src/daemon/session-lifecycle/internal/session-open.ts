@@ -35,6 +35,7 @@ import type {
 import { admitRuntimeOperations } from '../../runtime-admission.ts';
 import { resolveExistingSessionDeviceSelection } from '@agent-device/device-selection/device-selection-resolver';
 import { requireRuntimeBinding, requireRuntimeFacts } from '../../session-runtime-admission.ts';
+import { assertSessionDeviceClaim } from '../../device/device-claim-authority.ts';
 import {
   completeOpenCommand,
   openNewSessionWithDeviceClaim,
@@ -161,6 +162,15 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
   const req = foregroundResolution.type === 'resolved' ? foregroundResolution.req : params.req;
 
   if (session) {
+    if (session.deviceClaim?.reservationPhase === 'reserved') {
+      await assertSessionDeviceClaim({
+        device: session.device,
+        session: sessionName,
+        stateDir: sessionStore.resolveDaemonStateDir(),
+        ownership: session.deviceClaim,
+        deviceClaimRoot: sessionStore.resolveDeviceClaimRoot(),
+      });
+    }
     if (req.flags?.saveScript) {
       return errorResponse(
         'INVALID_ARGS',
@@ -193,7 +203,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
 
     // Reopening renews the claim before anything touches the device, so no other daemon ever sees
     // a device this session is actively coming back to as one its owner walked away from.
-    const lostClaim = await renewOpenSessionClaim(session.device, session.deviceClaim);
+    const lostClaim = await renewOpenSessionClaim(
+      session.device,
+      session.deviceClaim,
+      sessionStore.resolveDeviceClaimRoot(),
+    );
     if (lostClaim) return lostClaim;
 
     const device = await refreshSessionDeviceIfNeeded(session.device);
@@ -228,7 +242,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
 
     // Preparation may have booted the device to reach this surface, and a boot an owner caused for
     // its own reopen cannot later read as a boot its owner walked away from.
-    const reclaimed = await renewOpenSessionClaim(device, session.deviceClaim);
+    const reclaimed = await renewOpenSessionClaim(
+      device,
+      session.deviceClaim,
+      sessionStore.resolveDeviceClaimRoot(),
+    );
     if (reclaimed) return reclaimed;
 
     return await completeOpenCommand({

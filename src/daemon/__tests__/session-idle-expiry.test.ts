@@ -1,3 +1,5 @@
+import { deviceClaimBindingId } from '../../device-claim-root.ts';
+import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
@@ -20,6 +22,8 @@ import type { DurableResourceEnvelope } from '@agent-device/contracts/durable-re
 import type { SessionState } from '../session-state.ts';
 
 const CLAIM = {
+  claimRootId: currentTestDeviceClaimRoot().id,
+  claimBindingId: deviceClaimBindingId(currentTestDeviceClaimRoot(), 'ios:sim-1', 'token-1'),
   deviceKey: 'ios:sim-1',
   ownerToken: 'token-1',
   ownerPid: 4242,

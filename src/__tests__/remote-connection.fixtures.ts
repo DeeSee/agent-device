@@ -61,6 +61,7 @@ export function createTestClient(
   } = {},
 ): AgentDeviceClient {
   return {
+    daemon: createThrowingMethodGroup<AgentDeviceClient['daemon']>(),
     command: createThrowingMethodGroup<AgentDeviceClient['command']>(),
     devices: createThrowingMethodGroup<AgentDeviceClient['devices']>({
       list:

@@ -18,7 +18,17 @@ test('Provider-backed integration daemon lifecycle writes metadata and protects 
   const logPath = path.join(root, 'daemon.log');
 
   try {
-    writeInfo(root, infoPath, logPath, {
+    fs.writeFileSync(
+      path.join(root, 'daemon.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        processStartTime: 'start-time',
+        version: 'test',
+        startedAt: 1,
+      }),
+    );
+    writeInfo(root, infoPath, path.join(root, 'daemon.lock'), logPath, {
+      deviceClaimRootId: 'test-root',
       socketPort: 4210,
       httpPort: 4310,
       token: 'provider-scenario-token',
@@ -37,28 +47,60 @@ test('Provider-backed integration daemon lifecycle writes metadata and protects 
     assert.equal(info.stateDir, root);
 
     const httpOnlyInfoPath = path.join(root, 'daemon-http.json');
-    writeInfo(root, httpOnlyInfoPath, path.join(root, 'daemon-http.log'), {
-      httpPort: 4311,
-      token: 'http-only-token',
-      version: '0.0.0-provider-scenario',
-      codeOrigin: 'checkout',
-      codeSignature: 'graph:1:http',
-      processStartTime: undefined,
-    });
+    fs.writeFileSync(
+      path.join(root, 'daemon.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        processStartTime: 'start-time',
+        version: 'test',
+        startedAt: 1,
+      }),
+    );
+    writeInfo(
+      root,
+      httpOnlyInfoPath,
+      path.join(root, 'daemon.lock'),
+      path.join(root, 'daemon-http.log'),
+      {
+        deviceClaimRootId: 'test-root',
+        httpPort: 4311,
+        token: 'http-only-token',
+        version: '0.0.0-provider-scenario',
+        codeOrigin: 'checkout',
+        codeSignature: 'graph:1:http',
+        processStartTime: 'start-time',
+      },
+    );
     const httpOnlyInfo = JSON.parse(fs.readFileSync(httpOnlyInfoPath, 'utf8'));
     assert.equal(httpOnlyInfo.transport, 'http');
     assert.equal(httpOnlyInfo.port, undefined);
     assert.equal(httpOnlyInfo.httpPort, 4311);
 
     const socketOnlyInfoPath = path.join(root, 'daemon-socket.json');
-    writeInfo(root, socketOnlyInfoPath, path.join(root, 'daemon-socket.log'), {
-      socketPort: 4211,
-      token: 'socket-only-token',
-      version: '0.0.0-provider-scenario',
-      codeOrigin: 'checkout',
-      codeSignature: 'graph:1:socket',
-      processStartTime: undefined,
-    });
+    fs.writeFileSync(
+      path.join(root, 'daemon.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        processStartTime: 'start-time',
+        version: 'test',
+        startedAt: 1,
+      }),
+    );
+    writeInfo(
+      root,
+      socketOnlyInfoPath,
+      path.join(root, 'daemon.lock'),
+      path.join(root, 'daemon-socket.log'),
+      {
+        deviceClaimRootId: 'test-root',
+        socketPort: 4211,
+        token: 'socket-only-token',
+        version: '0.0.0-provider-scenario',
+        codeOrigin: 'checkout',
+        codeSignature: 'graph:1:socket',
+        processStartTime: 'start-time',
+      },
+    );
     const socketOnlyInfo = JSON.parse(fs.readFileSync(socketOnlyInfoPath, 'utf8'));
     assert.equal(socketOnlyInfo.transport, 'socket');
     assert.equal(socketOnlyInfo.port, 4211);
@@ -92,7 +134,10 @@ test('Provider-backed integration daemon lifecycle writes metadata and protects 
       infoPath,
       JSON.stringify({ pid: process.pid, processStartTime: 'start-time', token: 't', port: 1 }),
     );
-    assert.deepEqual(removeInfoOwnedBy(infoPath, owner), { removed: true });
+    assert.deepEqual(
+      removeInfoOwnedBy(infoPath, owner, path.join(path.dirname(infoPath), 'daemon.lock')),
+      { removed: true },
+    );
     assert.equal(fs.existsSync(infoPath), false);
 
     // A successor's record survives this process's shutdown, which is what #3087 is about.
@@ -101,11 +146,14 @@ test('Provider-backed integration daemon lifecycle writes metadata and protects 
       foreignPath,
       JSON.stringify({ pid: 999_999_999, processStartTime: 'other', token: 't', port: 1 }),
     );
-    assert.deepEqual(removeInfoOwnedBy(foreignPath, owner), {
-      removed: false,
-      reason: 'replaced',
-      registeredPid: 999_999_999,
-    });
+    assert.deepEqual(
+      removeInfoOwnedBy(foreignPath, owner, path.join(path.dirname(foreignPath), 'daemon.lock')),
+      {
+        removed: false,
+        reason: 'replaced',
+        registeredPid: 999_999_999,
+      },
+    );
     assert.equal(fs.existsSync(foreignPath), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

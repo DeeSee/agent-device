@@ -1,4 +1,7 @@
 export {
+  resolveHostPath,
+  hostFileLstat,
+  createHostDirectory,
   createHostDirectoryLinkSync,
   accessHostFile,
   chmodHostFile,

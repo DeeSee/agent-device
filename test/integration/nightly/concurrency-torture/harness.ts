@@ -1,3 +1,5 @@
+import { deviceClaimBindingId } from '../../../../src/device-claim-root.ts';
+import { currentTestDeviceClaimRoot } from '../../../../src/__tests__/test-utils/device-claim-store.ts';
 // Seeded concurrency torture harness for session / lease / lock invariants (#1416).
 //
 // N logical clients drive randomized-but-seeded programs of
@@ -397,6 +399,12 @@ class TortureWorld {
       actions: [],
       lease: { ...leaseScope, expiresAt: lease.expiresAt },
       deviceClaim: {
+        claimRootId: currentTestDeviceClaimRoot().id,
+        claimBindingId: deviceClaimBindingId(
+          currentTestDeviceClaimRoot(),
+          deviceKey,
+          claimResult.ownership.ownerToken,
+        ),
         deviceKey,
         ownerToken: claimResult.ownership.ownerToken,
         ownerPid: process.pid,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { DaemonStopResult } from '../../../daemon/daemon-stop.ts';
+import type { DaemonStopResult } from '../../../daemon-stop.ts';
 import { mkdtempForTestSync } from '../../../__tests__/test-utils/tmp-dir.ts';
 
 const mocks = vi.hoisted(() => ({
@@ -12,11 +12,19 @@ const mocks = vi.hoisted(() => ({
   writeCommandOutput: vi.fn(),
 }));
 
-vi.mock('../../../daemon/daemon-stop.ts', () => ({
+vi.mock('../../../daemon-stop.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../daemon-stop.ts')>()),
+  readDaemonAuthorityIdentity: () => ({
+    pid: 123,
+    processStartTime: 'start-time',
+    version: 'test',
+    codeSignature: 'test-signature',
+    deviceClaimRootId: 'test-root',
+  }),
   readDaemonStopIdentity: mocks.readDaemonStopIdentity,
   stopDaemon: mocks.stopDaemon,
 }));
-vi.mock('../../../daemon/daemon-shutdown-report.ts', () => ({
+vi.mock('../../../daemon-shutdown-report.ts', () => ({
   readDaemonShutdownReport: mocks.readDaemonShutdownReport,
 }));
 vi.mock('../../../platform-runtime-daemon-owner-cleanup.ts', () => ({
@@ -74,6 +82,14 @@ test('merges a graceful shutdown report and cleans runner leases with the start-
     deviceId: 'emulator-5554',
   };
   mocks.readDaemonShutdownReport.mockReturnValue({
+    schemaVersion: 2,
+    daemon: {
+      pid: 123,
+      processStartTime: 'start-time',
+      version: 'test',
+      codeSignature: 'test-signature',
+      deviceClaimRootId: 'test-root',
+    },
     providerReleases: {
       released: [{ leaseId: 'lease-1', provider: 'limrun' }],
       pending: [],
@@ -133,7 +149,7 @@ test('reports graceful provider cleanup as unknown when the shutdown report is u
         clean: false,
         cleanupConfidence: 'unknown',
         providerReleases: { status: 'unknown', released: [], pending: null },
-        warnings: [expect.stringContaining('provider cleanup state is unknown')],
+        warnings: [expect.stringContaining('cleanup state is unknown')],
       }),
       expect.any(Function),
     );
@@ -153,6 +169,14 @@ test('warns in text output when a graceful stop leaves an orphaned claim', async
     deviceId: 'emulator-5554',
   };
   mocks.readDaemonShutdownReport.mockReturnValue({
+    schemaVersion: 2,
+    daemon: {
+      pid: 123,
+      processStartTime: 'start-time',
+      version: 'test',
+      codeSignature: 'test-signature',
+      deviceClaimRootId: 'test-root',
+    },
     providerReleases: { released: [], pending: [] },
     claims: { released: [], orphaned: [claim], superseded: [], unattributable: [] },
   });
@@ -190,6 +214,14 @@ test('routes an unattributable claim to the default status view, never to --stal
     deviceId: 'emulator-5554',
   };
   mocks.readDaemonShutdownReport.mockReturnValue({
+    schemaVersion: 2,
+    daemon: {
+      pid: 123,
+      processStartTime: 'start-time',
+      version: 'test',
+      codeSignature: 'test-signature',
+      deviceClaimRootId: 'test-root',
+    },
     providerReleases: { released: [], pending: [] },
     claims: { released: [], orphaned: [], superseded: [], unattributable: [claim] },
   });

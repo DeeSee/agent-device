@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../../__tests__/test-utils/device-claim-store.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -106,7 +107,10 @@ function handleCloseCommand(
 function acquireDeviceClaim(
   params: Omit<Parameters<typeof acquireProductionDeviceClaim>[0], 'reconcileOrphanedDeviceClaim'>,
 ) {
-  return acquireProductionDeviceClaim({ ...params, reconcileOrphanedDeviceClaim });
+  return acquireProductionDeviceClaim({
+    ...params,
+    reconcileOrphanedDeviceClaim,
+  });
 }
 
 afterEach(() => {
@@ -161,7 +165,10 @@ test('failed local open before device setup rolls its device claim back', async 
       }),
     (error: unknown) => error === rejectionError,
   );
-  assert.deepEqual(inspectDeviceClaims({ serial: stoppedAvd.id }), []);
+  assert.deepEqual(
+    inspectDeviceClaims({ serial: stoppedAvd.id }, currentTestDeviceClaimRoot()),
+    [],
+  );
 });
 
 test('failed local open after dispatch retains its device claim for recovery', async () => {
@@ -188,7 +195,7 @@ test('failed local open after dispatch retains its device claim for recovery', a
       }),
     (error: unknown) => error === rejectionError,
   );
-  const retained = inspectDeviceClaims({ serial: android.id })[0];
+  const retained = inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot())[0];
   assert.equal(retained?.classification, 'live');
   assert.equal(typeof retained?.claim?.abandonedAtMs, 'number');
 });
@@ -222,7 +229,10 @@ test('failed local runtime-hint setup retains its device claim before open dispa
 
   assert.equal(mockApplyRuntimeHints.mock.calls.length, 1);
   assert.equal(mockDispatch.mock.calls.length, 0);
-  assert.equal(inspectDeviceClaims({ serial: android.id })[0]?.classification, 'live');
+  assert.equal(
+    inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot())[0]?.classification,
+    'live',
+  );
   assert.equal(store.get('claim-runtime-hint-failure'), undefined);
 });
 
@@ -245,7 +255,7 @@ test('failed local open response rolls its device claim back', async () => {
   });
 
   assert.equal(response.ok, false);
-  assert.deepEqual(inspectDeviceClaims({ serial: android.id }), []);
+  assert.deepEqual(inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot()), []);
 });
 
 test('cancellation after local device setup retains the device claim for recovery', async () => {
@@ -273,7 +283,10 @@ test('cancellation after local device setup retains the device claim for recover
     assert.equal(response.ok, false);
     assert.equal(mockDispatch.mock.calls.length, 1);
     assert.equal(vi.mocked(activateAndroidTestIme).mock.calls.length, 1);
-    assert.equal(inspectDeviceClaims({ serial: android.id })[0]?.classification, 'live');
+    assert.equal(
+      inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot())[0]?.classification,
+      'live',
+    );
     assert.equal(store.get('claim-canceled-after-dispatch'), undefined);
   } finally {
     clearRequestCanceled(requestId);
@@ -320,7 +333,7 @@ test('a canceled attempt lets the next attempt of the same suite open the device
   });
 
   assert.equal(retry.ok, true);
-  const claim = inspectDeviceClaims({ serial: android.id })[0]?.claim;
+  const claim = inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot())[0]?.claim;
   assert.equal(claim?.session, 'suite:1-gesture-pan-duration:attempt-2');
   assert.equal(claim?.abandonedAtMs, undefined);
   assert.equal(
@@ -352,7 +365,7 @@ test('provider-owned open creates no host-local device claim from its selected o
     bindDevice: bindProviderLifecycleRuntime,
   });
   assert.equal(response.ok, true);
-  assert.deepEqual(inspectDeviceClaims({ serial: android.id }), []);
+  assert.deepEqual(inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot()), []);
   assert.equal(store.get('remote-open')?.deviceClaim, undefined);
 });
 
@@ -384,7 +397,7 @@ test('a managed local owner open is refused through the real route and creates n
   assert.equal(response.error.details?.reason, 'runtime-contract-invalid');
   assert.equal(response.error.details?.owner, 'managed:["fixture-allocator"]');
   // No host-local claim, no session, and no device effect precede the refusal.
-  assert.deepEqual(inspectDeviceClaims({}), []);
+  assert.deepEqual(inspectDeviceClaims({}, currentTestDeviceClaimRoot()), []);
   assert.equal(store.get('managed-open'), undefined);
   assert.equal(mockEnsureDeviceReady.mock.calls.length, 0);
   assert.equal(mockResolveAndroidPackage.mock.calls.length, 0);
@@ -399,6 +412,7 @@ test('a foreign live claim rejects open before platform preparation or mutation'
   const ownerStateDir = path.join(stateDir, 'foreign-owner');
   fs.mkdirSync(ownerStateDir);
   const acquired = await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: android,
     session: 'foreign-session',
     workspace: '/worktrees/foreign',
@@ -445,6 +459,7 @@ test('a foreign live claim rejects open before platform preparation or mutation'
 test('local close clears its matching device claim after teardown', async () => {
   const { store, stateDir } = setup();
   const acquired = await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: android,
     session: 'close-claim',
     workspace: process.cwd(),
@@ -469,12 +484,13 @@ test('local close clears its matching device claim after teardown', async () => 
     leaseRegistry: new LeaseRegistry(),
   });
   assert.equal(response.ok, true);
-  assert.deepEqual(inspectDeviceClaims({ serial: android.id }), []);
+  assert.deepEqual(inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot()), []);
 });
 
 test('#1391: a close-time script save failure still clears the device claim and deletes the session', async () => {
   const { store, stateDir } = setup();
   const acquired = await acquireDeviceClaim({
+    deviceClaimRoot: currentTestDeviceClaimRoot(),
     device: android,
     session: 'close-save-script-failure',
     workspace: process.cwd(),
@@ -536,7 +552,7 @@ test('#1391: a close-time script save failure still clears the device claim and 
   assert.equal(error.details?.reason, 'script_target_exists');
   assert.equal(error.details?.path, targetPath);
   assert.equal(store.get('close-save-script-failure'), undefined);
-  assert.deepEqual(inspectDeviceClaims({ serial: android.id }), []);
+  assert.deepEqual(inspectDeviceClaims({ serial: android.id }, currentTestDeviceClaimRoot()), []);
   assert.equal(fs.readFileSync(targetPath, 'utf8'), 'pre-existing\n');
 
   assert.deepEqual(

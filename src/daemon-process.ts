@@ -4,6 +4,7 @@ import {
   readProcessCommand,
   readProcessStartTime,
 } from '@agent-device/host-kit/process';
+import { AppError } from '@agent-device/kernel/errors';
 import { sleep } from '@agent-device/host-kit/retry';
 
 const DAEMON_COMMAND_PATTERNS = [
@@ -25,17 +26,25 @@ export function isAgentDeviceDaemonCommand(command: string): boolean {
   return DAEMON_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-export function isAgentDeviceDaemonProcess(
+export function isAgentDeviceDaemonProcess(pid: number, expectedStartTime?: string): boolean {
+  return inspectAgentDeviceDaemonProcess(pid, expectedStartTime) === 'match';
+}
+
+export type AgentDeviceDaemonProcessObservation = 'match' | 'absent' | 'different' | 'unknown';
+
+export function inspectAgentDeviceDaemonProcess(
   pid: number,
-  expectedStartTime: string | undefined,
-): boolean {
-  if (!expectedStartTime) return false;
-  if (!isProcessAlive(pid)) return false;
-  const actualStartTime = readProcessStartTime(pid);
-  if (!actualStartTime || actualStartTime !== expectedStartTime) return false;
+  expectedStartTime?: string,
+): AgentDeviceDaemonProcessObservation {
+  if (!isProcessAlive(pid)) return 'absent';
+  const normalizedExpectedStartTime = expectedStartTime?.trim();
+  if (!normalizedExpectedStartTime) return 'unknown';
+  const actualStartTime = readProcessStartTime(pid)?.trim();
+  if (!actualStartTime) return 'unknown';
+  if (actualStartTime !== normalizedExpectedStartTime) return 'different';
   const command = readProcessCommand(pid);
-  if (!command) return false;
-  return isAgentDeviceDaemonCommand(command);
+  if (!command) return 'unknown';
+  return isAgentDeviceDaemonCommand(command) ? 'match' : 'different';
 }
 
 export function trySignalProcess(pid: number, signal: NodeJS.Signals): boolean {
@@ -100,10 +109,21 @@ export async function waitForDaemonExit(
   return { exited, elapsedMs: Date.now() - startedAt };
 }
 
-function signalDaemonIdentity(identity: DaemonProcessIdentity, signal: NodeJS.Signals): boolean {
-  if (!isAgentDeviceDaemonProcess(identity.pid, identity.startTime)) return false;
-  return trySignalProcess(identity.pid, signal);
-}
+export type DaemonTakeoverEffects = Readonly<{
+  inspectDaemonProcess(
+    pid: number,
+    expectedStartTime?: string,
+  ): AgentDeviceDaemonProcessObservation;
+  trySignal(pid: number, signal: NodeJS.Signals): boolean;
+  waitForExit(pid: number, timeoutMs: number, expectedStartTime: string): Promise<boolean>;
+}>;
+
+const daemonTakeoverEffects: DaemonTakeoverEffects = {
+  inspectDaemonProcess: inspectAgentDeviceDaemonProcess,
+  trySignal: trySignalProcess,
+  waitForExit: async (pid, timeoutMs, startTime) =>
+    (await waitForDaemonExit({ pid, startTime }, { timeoutMs })).exited,
+};
 
 export async function stopProcessForTakeover(
   pid: number,
@@ -112,11 +132,68 @@ export async function stopProcessForTakeover(
     killTimeoutMs: number;
     expectedStartTime: string | undefined;
   },
+  effects: DaemonTakeoverEffects = daemonTakeoverEffects,
 ): Promise<void> {
-  if (!options.expectedStartTime) return;
-  const identity: DaemonProcessIdentity = { pid, startTime: options.expectedStartTime };
-  if (!signalDaemonIdentity(identity, 'SIGTERM')) return;
-  if ((await waitForDaemonExit(identity, { timeoutMs: options.termTimeoutMs })).exited) return;
-  if (!signalDaemonIdentity(identity, 'SIGKILL')) return;
-  await waitForDaemonExit(identity, { timeoutMs: options.killTimeoutMs });
+  const initialOwner = effects.inspectDaemonProcess(pid, options.expectedStartTime);
+  requireInspectableTakeoverOwner(pid, options.expectedStartTime, initialOwner);
+  if (initialOwner !== 'match') return;
+  if (!effects.trySignal(pid, 'SIGTERM')) {
+    refuseIfExactDaemonStillLives(pid, options.expectedStartTime, 'term_signal', effects);
+    return;
+  }
+  if (await effects.waitForExit(pid, options.termTimeoutMs, options.expectedStartTime!)) return;
+  if (!exactDaemonStillLives(pid, options.expectedStartTime, effects)) return;
+  if (!effects.trySignal(pid, 'SIGKILL')) {
+    refuseIfExactDaemonStillLives(pid, options.expectedStartTime, 'kill_signal', effects);
+    return;
+  }
+  if (await effects.waitForExit(pid, options.killTimeoutMs, options.expectedStartTime!)) return;
+  refuseIfExactDaemonStillLives(pid, options.expectedStartTime, 'kill_timeout', effects);
+}
+
+function refuseIfExactDaemonStillLives(
+  pid: number,
+  expectedStartTime: string | undefined,
+  phase: 'term_signal' | 'kill_signal' | 'kill_timeout',
+  effects: DaemonTakeoverEffects,
+): void {
+  const observation = effects.inspectDaemonProcess(pid, expectedStartTime);
+  if (observation === 'absent' || observation === 'different') return;
+  throw daemonTakeoverIncomplete(pid, expectedStartTime, phase);
+}
+
+function exactDaemonStillLives(
+  pid: number,
+  expectedStartTime: string | undefined,
+  effects: DaemonTakeoverEffects,
+): boolean {
+  const observation = effects.inspectDaemonProcess(pid, expectedStartTime);
+  if (observation === 'unknown') {
+    throw daemonTakeoverIncomplete(pid, expectedStartTime, 'identity_verification');
+  }
+  return observation === 'match';
+}
+
+function requireInspectableTakeoverOwner(
+  pid: number,
+  expectedStartTime: string | undefined,
+  observation: AgentDeviceDaemonProcessObservation,
+): void {
+  if (observation === 'unknown') {
+    throw daemonTakeoverIncomplete(pid, expectedStartTime, 'identity_verification');
+  }
+}
+
+function daemonTakeoverIncomplete(
+  pid: number,
+  expectedStartTime: string | undefined,
+  phase: 'identity_verification' | 'term_signal' | 'kill_signal' | 'kill_timeout',
+): AppError {
+  return new AppError('COMMAND_FAILED', 'Refusing to replace a still-running agent-device daemon', {
+    reason: 'daemon_takeover_incomplete',
+    phase,
+    pid,
+    ...(expectedStartTime ? { expectedStartTime } : {}),
+    hint: 'The existing daemon could not be confirmed stopped. Keep its metadata, stop it with sufficient host permissions, then retry.',
+  });
 }

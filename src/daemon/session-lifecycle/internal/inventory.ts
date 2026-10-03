@@ -70,7 +70,7 @@ export async function handleSessionInventoryCommands(
     case 'session_list':
       return sessionListInventoryResponse(req, sessionStore);
     case 'devices':
-      return await devicesInventoryResponse(req);
+      return await devicesInventoryResponse(req, sessionStore);
     case 'capabilities':
       return await capabilitiesInventoryResponse({
         req,
@@ -110,6 +110,9 @@ function sessionListInventoryResponse(
 
 function publicSessionInfo({ address, session }: SessionRef, sessionStore: SessionStore) {
   const sessionStateDir = sessionStore.resolveSessionDir(address);
+  const lifecycle = session.closeRecovery
+    ? 'close_retry_required'
+    : (session.deviceClaim?.reservationPhase ?? 'opened');
   return {
     name: session.name,
     address,
@@ -125,6 +128,8 @@ function publicSessionInfo({ address, session }: SessionRef, sessionStore: Sessi
     id: session.device.id,
     device_id: session.device.id,
     createdAt: session.createdAt,
+    lifecycle,
+    ...(session.appBundleId === undefined ? {} : { appBundleId: session.appBundleId }),
     ...(isApplePlatform(session.device.platform) &&
       !isMacOs(session.device) && {
         device_udid: session.device.id,
@@ -133,9 +138,12 @@ function publicSessionInfo({ address, session }: SessionRef, sessionStore: Sessi
   };
 }
 
-async function devicesInventoryResponse(req: DaemonRequest): Promise<DaemonResponse> {
+async function devicesInventoryResponse(
+  req: DaemonRequest,
+  sessionStore: SessionStore,
+): Promise<DaemonResponse> {
   try {
-    const blockingClaims = blockingClaimOwnersByDevice();
+    const blockingClaims = blockingClaimOwnersByDevice(sessionStore);
     return {
       ok: true,
       data: {
@@ -158,9 +166,11 @@ async function devicesInventoryResponse(req: DaemonRequest): Promise<DaemonRespo
   }
 }
 
-function blockingClaimOwnersByDevice(): Map<string, { session: string; workspace: string }> {
+function blockingClaimOwnersByDevice(
+  sessionStore: SessionStore,
+): Map<string, { session: string; workspace: string }> {
   const owners = new Map<string, { session: string; workspace: string }>();
-  for (const entry of inspectDeviceClaims({})) {
+  for (const entry of inspectDeviceClaims({}, sessionStore.resolveDeviceClaimRoot())) {
     const claim = entry.claim;
     if (!claim || deviceClaimOwnerCannotRelease(entry.classification)) continue;
     owners.set(claim.deviceKey, {

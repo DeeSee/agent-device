@@ -531,6 +531,7 @@ test('the real tree parses, declares, and passes R11', () => {
   assert.ok(platformApplePackage, 'platform-apple package must exist');
   assert.deepEqual([...platformApplePackage.exportTargets.keys()].sort(), [
     '@agent-device/platform-apple',
+    '@agent-device/platform-apple/app-container-json',
     '@agent-device/platform-apple/app-lifecycle',
     '@agent-device/platform-apple/app-resolution',
     '@agent-device/platform-apple/debug-symbols',

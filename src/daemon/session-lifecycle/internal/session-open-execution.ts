@@ -1,3 +1,4 @@
+import type { DeviceClaimRoot } from '../../../device-claim-root.ts';
 import {
   openApplicationRuntimeUse,
   openApplicationWithRuntimeHintApplyUse,
@@ -157,9 +158,10 @@ function buildStartupPerfSample(
 export async function renewOpenSessionClaim(
   device: DeviceInfo,
   ownership: DeviceClaimSessionOwnership | undefined,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<DaemonResponse | undefined> {
   if (!ownership) return undefined;
-  const renewal = await renewDeviceClaim(ownership);
+  const renewal = await renewDeviceClaim(ownership, deviceClaimRoot);
   if (renewal.status === 'renewed') return undefined;
   if (renewal.conflict) return buildDeviceClaimConflictError(device, renewal.conflict);
   return errorResponse(
@@ -280,6 +282,10 @@ export async function completeOpenCommand(params: {
     appBundleId: sessionAppBundleId,
     appName,
   });
+  if (existingSession?.deviceClaim?.reservationPhase && nextSession.deviceClaim) {
+    const { reservationPhase: _reservationPhase, ...activeClaim } = nextSession.deviceClaim;
+    nextSession.deviceClaim = activeClaim;
+  }
   nextSession.lease = resolveSessionLeaseForRequest({
     req,
     existingLease: existingSession?.lease,
@@ -351,9 +357,17 @@ async function prepareOpenDispatchSession(params: {
 > {
   const { req, sessionName, sessionStore, existingSession } = params;
   const beforeDispatch = req.internal?.openLifecycle?.beforeDispatch;
-  if (!beforeDispatch) return { type: 'session', session: existingSession };
+  const reserved = existingSession?.deviceClaim?.reservationPhase === 'reserved';
+  if (!beforeDispatch && !reserved) return { type: 'session', session: existingSession };
   const provisionalSession = createProvisionalOpenDispatchSession(params);
+  if (reserved && provisionalSession.deviceClaim) {
+    provisionalSession.deviceClaim = {
+      ...provisionalSession.deviceClaim,
+      reservationPhase: 'opening',
+    };
+  }
   sessionStore.set(sessionName, provisionalSession);
+  if (!beforeDispatch) return { type: 'session', session: provisionalSession };
   const lifecycleResponse = await beforeDispatch();
   if (lifecycleResponse && !lifecycleResponse.ok)
     return { type: 'response', response: lifecycleResponse };
@@ -435,6 +449,7 @@ async function acquireDeviceClaimForOwner(params: {
           device,
           owner,
           stateDir: sessionStore.resolveDaemonStateDir(),
+          deviceClaimRoot: sessionStore.resolveDeviceClaimRoot(),
           intent: { kind: 'ordinary' },
         }),
       );
@@ -446,6 +461,7 @@ async function acquireDeviceClaimForOwner(params: {
         session: sessionName,
         workspace: req.meta?.cwd ?? process.cwd(),
         stateDir: sessionStore.resolveDaemonStateDir(),
+        deviceClaimRoot: sessionStore.resolveDeviceClaimRoot(),
         reconcileOrphanedDeviceClaim,
         observeDeviceBoot: deviceBootObservation,
       });
@@ -525,7 +541,11 @@ export async function openNewSessionWithDeviceClaim(params: {
     // Stamping here is what covers a boot preparation caused for this very open; from
     // `completeOpenCommand` on, a relaunch-close or a runtime-hint write may already have touched the
     // app, so a failure from that point cannot prove ownership was never established.
-    const reclaimed = await renewOpenSessionClaim(device, deviceClaim);
+    const reclaimed = await renewOpenSessionClaim(
+      device,
+      deviceClaim,
+      sessionStore.resolveDeviceClaimRoot(),
+    );
     if (reclaimed) return reclaimed;
     effects.mayHaveStarted = true;
     const requestedPositionals = req.positionals ?? [];
@@ -573,11 +593,11 @@ async function rollbackNewSessionClaim(params: {
   const { ownership, effects, sessionName, sessionStore } = params;
   if (!ownership) return;
   if (!effects.mayHaveStarted) {
-    await clearDeviceClaim(ownership);
+    await clearDeviceClaim(ownership, sessionStore.resolveDeviceClaimRoot());
     return;
   }
   if (sessionStore.get(sessionName)?.deviceClaim?.ownerToken === ownership.ownerToken) return;
-  const outcome = await abandonDeviceClaim(ownership);
+  const outcome = await abandonDeviceClaim(ownership, sessionStore.resolveDeviceClaimRoot());
   emitDiagnostic({
     level: 'warn',
     phase: 'device_claim_open_effects_unconfirmed',

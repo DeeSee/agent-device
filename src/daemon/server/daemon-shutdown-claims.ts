@@ -1,8 +1,9 @@
 import { publicPlatformString } from '@agent-device/kernel/device';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { clearDeviceClaim, type DeviceClaimClearOutcome } from '../device/device-claims.ts';
-import type { DeviceClaimRecord } from '../daemon-shutdown-report.ts';
+import type { DeviceClaimRecord } from '../../daemon-shutdown-report.ts';
 import type { SessionState } from '../session-state.ts';
+import type { DeviceClaimRoot } from '../../device-claim-root.ts';
 
 export type DaemonShutdownClaims = {
   released: DeviceClaimRecord[];
@@ -20,6 +21,8 @@ export type DaemonShutdownClaims = {
 
 export type DaemonShutdownClaimLedger = Readonly<{
   claims: DaemonShutdownClaims;
+  /** Conservatively preserves every claim when shutdown overlaps request effects. */
+  retainClaimsForInFlightRequests(): void;
   /** Runs only once a session's teardown reached a safe terminal state. */
   releaseClaim(session: SessionState): Promise<void>;
   /** Classifies the session's claim once its teardown has finished either way. */
@@ -55,7 +58,9 @@ const CLEAR_UNRECORDED = 'clear-unrecorded';
  *                   it. Nor is it `superseded`, which would assert a successor
  *                   this verdict explicitly refuses to assume.
  */
-export function createDaemonShutdownClaimLedger(): DaemonShutdownClaimLedger {
+export function createDaemonShutdownClaimLedger(
+  deviceClaimRoot: DeviceClaimRoot,
+): DaemonShutdownClaimLedger {
   const claims: DaemonShutdownClaims = {
     released: [],
     orphaned: [],
@@ -63,12 +68,16 @@ export function createDaemonShutdownClaimLedger(): DaemonShutdownClaimLedger {
     unattributable: [],
   };
   const outcomes = new Map<string, DeviceClaimClearOutcome | typeof CLEAR_UNRECORDED>();
+  let retainClaims = false;
   return {
     claims,
+    retainClaimsForInFlightRequests: () => {
+      retainClaims = true;
+    },
     releaseClaim: async (session) => {
-      if (!session.deviceClaim) return;
+      if (retainClaims || !session.deviceClaim) return;
       try {
-        outcomes.set(session.name, await clearDeviceClaim(session.deviceClaim));
+        outcomes.set(session.name, await clearDeviceClaim(session.deviceClaim, deviceClaimRoot));
       } catch (error) {
         outcomes.set(session.name, CLEAR_UNRECORDED);
         emitDiagnostic({
@@ -119,4 +128,11 @@ export function createDaemonShutdownClaimLedger(): DaemonShutdownClaimLedger {
 
 function assertDeclaredClaimOutcome(outcome: never): never {
   throw new Error(`Undeclared device-claim outcome: ${String(outcome)}`);
+}
+
+export function observeInFlightRequestsForShutdown(
+  ledger: DaemonShutdownClaimLedger,
+  inFlightRequestCount: number,
+): void {
+  if (inFlightRequestCount > 0) ledger.retainClaimsForInFlightRequests();
 }

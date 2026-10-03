@@ -141,7 +141,11 @@ export type SessionState = {
     ownerToken: string;
     ownerPid: number;
     ownerStartTime: string | null;
+    claimRootId: string;
+    claimBindingId: string;
+    reservationPhase?: 'reserved' | 'opening';
   };
+  closeRecovery?: { state: 'retry-required' };
   device: DeviceInfo;
   createdAt: number;
   surface?: SessionSurface;

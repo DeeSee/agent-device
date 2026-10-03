@@ -69,7 +69,8 @@ function bootedSimulatorListResult(
 }
 
 function deploymentHost(
-  appleDeployment: AppleAppDeploymentExecutor,
+  appleDeployment: Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'> &
+    Partial<Pick<AppleAppDeploymentExecutor, 'writeAppContainerJson'>>,
   run = xcrunLikeRun((request) => ({
     stdout: request.args.includes('list')
       ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
@@ -79,7 +80,12 @@ function deploymentHost(
   })),
 ): PlatformRuntimeHost {
   return {
-    appleDeployment,
+    appleDeployment: {
+      writeAppContainerJson: vi.fn(async () => {
+        throw new Error('unexpected app-container write');
+      }),
+      ...appleDeployment,
+    },
     appleTools: { isXcrunAvailable: async () => true, run },
     commands: {
       which: async () => undefined,
@@ -248,7 +254,7 @@ test('exposes only fact-admitted Apple deployment operations', async () => {
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const run = vi.fn(async (request: { args: readonly string[] }) => ({
     stdout: request.args.includes('list')
       ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
@@ -317,7 +323,7 @@ test('physical iOS install failure surfaces the devicectl Developer Mode hint', 
     prepareArtifact,
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('install')
       ? {
@@ -362,7 +368,7 @@ test('simulator install failure surfaces the simctl stderr excerpt with no devic
     prepareArtifact,
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('install')
       ? {
@@ -402,7 +408,7 @@ test('simulator push failure surfaces the simctl stderr excerpt', async () => {
     prepareArtifact: vi.fn(),
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('push')
       ? {
@@ -438,7 +444,7 @@ test('physical iOS uninstall failure surfaces the devicectl Developer Mode hint'
     prepareArtifact: vi.fn(),
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('uninstall')
       ? {
@@ -493,7 +499,7 @@ test.each([
       prepareArtifact,
       resolveAppBundleId,
       withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-    } as AppleAppDeploymentExecutor;
+    } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
     const run = xcrunLikeRun((request) => {
       if (request.args.includes('uninstall')) {
         return { stdout: '', stderr: 'ERROR: App Not Installed', exitCode: 1 };
@@ -534,7 +540,7 @@ test('preserves Apple reinstall partial-failure ordering', async () => {
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const host = deploymentHost(executor);
   const operations = createAppleAppDeploymentOperations({
     host,
@@ -599,7 +605,7 @@ test('clears a concurrently repopulated fuzzy resolution after a partial-failed 
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache,
-  } as AppleAppDeploymentExecutor;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
   const operations = createAppleAppDeploymentOperations({
     host: deploymentHost(executor),
     device: appleDevice(),
@@ -620,4 +626,170 @@ test('clears a concurrently repopulated fuzzy resolution after a partial-failed 
   expect(cachedResolutions).toEqual(new Map());
   expect(withInvalidatedAppResolutionCache).toHaveBeenCalledOnce();
   expect(resolveFuzzyTarget).toHaveBeenCalledTimes(2);
+});
+
+test('writes bounded app-container JSON after readiness and returns the executor receipt', async () => {
+  const resolveAppBundleId = vi.fn(async () => 'ru.yandex.mobile.search');
+  const writeAppContainerJson = vi.fn(async () => ({
+    sha256: 'a'.repeat(64),
+    byteLength: 21,
+  }));
+  const executor = {
+    prepareArtifact: vi.fn(),
+    resolveAppBundleId,
+    writeAppContainerJson,
+    withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  const run = vi.fn(async (request: { args: readonly string[] }) => ({
+    stdout: request.args.includes('list')
+      ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
+      : '',
+    stderr: '',
+    exitCode: 0,
+  }));
+  const device = appleDevice();
+  const operations = createAppleAppDeploymentOperations({
+    host: deploymentHost(executor, run),
+    device,
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    operations.writeAppContainerJson?.({
+      app: 'Search App',
+      containerPath: 'Documents/local_config.json',
+      value: { enabled: true },
+    }),
+  ).resolves.toEqual({
+    appId: 'ru.yandex.mobile.search',
+    containerPath: 'Documents/local_config.json',
+    sha256: 'a'.repeat(64),
+    byteLength: 21,
+    verified: true,
+  });
+  expect(run).toHaveBeenCalled();
+  expect(resolveAppBundleId).toHaveBeenCalledWith(device, 'Search App');
+  expect(writeAppContainerJson).toHaveBeenCalledWith(
+    device,
+    {
+      appId: 'ru.yandex.mobile.search',
+      containerPath: 'Documents/local_config.json',
+      serializedValue: '{"enabled":true}\n',
+    },
+    expect.any(AbortSignal),
+  );
+});
+
+test('refuses oversized app-container JSON before readiness or device effects', async () => {
+  const resolveAppBundleId = vi.fn();
+  const writeAppContainerJson = vi.fn();
+  const executor = {
+    prepareArtifact: vi.fn(),
+    resolveAppBundleId,
+    writeAppContainerJson,
+    withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  const run = vi.fn();
+  const operations = createAppleAppDeploymentOperations({
+    host: deploymentHost(executor, run),
+    device: appleDevice(),
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    operations.writeAppContainerJson?.({
+      app: 'Search App',
+      containerPath: 'Documents/local_config.json',
+      value: { oversized: 'x'.repeat(256 * 1024) },
+    }),
+  ).rejects.toMatchObject({ code: 'INVALID_ARGS' });
+  expect(run).not.toHaveBeenCalled();
+  expect(resolveAppBundleId).not.toHaveBeenCalled();
+  expect(writeAppContainerJson).not.toHaveBeenCalled();
+});
+
+test('derives Apple reinstall identity from the prepared artifact when app is omitted', async () => {
+  const order: string[] = [];
+  const cleanup = vi.fn(async () => {
+    order.push('cleanup');
+  });
+  const prepareArtifact = vi.fn(async () => {
+    order.push('prepare');
+    return {
+      installablePath: '/tmp/replacement.app',
+      bundleId: 'com.example.derived',
+      cleanup,
+    };
+  });
+  const resolveAppBundleId = vi.fn();
+  const run = vi.fn(async (request: { args: readonly string[] }) => {
+    if (request.args.includes('uninstall')) order.push('uninstall');
+    if (request.args.includes('install')) order.push('install');
+    return {
+      stdout: request.args.includes('list')
+        ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
+        : '',
+      stderr: '',
+      exitCode: 0,
+    };
+  });
+  const operations = createAppleAppDeploymentOperations({
+    host: deploymentHost(
+      {
+        prepareArtifact,
+        resolveAppBundleId,
+        writeAppContainerJson: vi.fn(async () => ({ sha256: '0'.repeat(64), byteLength: 3 })),
+        withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
+      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>,
+      run,
+    ),
+    device: appleDevice(),
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    operations.deployApp?.({
+      app: '',
+      appPath: '/tmp/replacement.app',
+      replaceExisting: true,
+    }),
+  ).resolves.toEqual({
+    bundleId: 'com.example.derived',
+    launchTarget: 'com.example.derived',
+  });
+
+  expect(order).toEqual(['prepare', 'uninstall', 'install', 'cleanup']);
+  expect(resolveAppBundleId).not.toHaveBeenCalled();
+  expect(prepareArtifact).toHaveBeenCalledWith(
+    { source: { kind: 'path', path: '/tmp/replacement.app' } },
+    expect.not.objectContaining({ appIdentifierHint: expect.anything() }),
+  );
+});
+
+test('refuses identity-less Apple replacement artifacts before device effects', async () => {
+  const cleanup = vi.fn(async () => {});
+  const run = vi.fn();
+  const operations = createAppleAppDeploymentOperations({
+    host: deploymentHost(
+      {
+        prepareArtifact: async () => ({ installablePath: '/tmp/replacement.app', cleanup }),
+        resolveAppBundleId: vi.fn(),
+        writeAppContainerJson: vi.fn(async () => ({ sha256: '0'.repeat(64), byteLength: 3 })),
+        withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
+      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>,
+      run,
+    ),
+    device: appleDevice(),
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    operations.deployApp?.({
+      app: '',
+      appPath: '/tmp/replacement.app',
+      replaceExisting: true,
+    }),
+  ).rejects.toMatchObject({ code: 'INVALID_ARGS' });
+  expect(run).not.toHaveBeenCalled();
+  expect(cleanup).toHaveBeenCalledOnce();
 });

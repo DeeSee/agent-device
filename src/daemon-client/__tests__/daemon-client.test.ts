@@ -219,7 +219,7 @@ test('resolveDaemonStartupHint shell-quotes cleanup paths', () => {
   );
 });
 
-test('cleanupFailedDaemonStartupMetadata removes partial startup metadata', async () => {
+test('cleanupFailedDaemonStartupMetadata retains malformed startup authority', async () => {
   const stateDir = mkdtempForTestSync('agent-device-daemon-cleanup-');
   const paths = resolveDaemonPaths(stateDir);
   try {
@@ -231,13 +231,16 @@ test('cleanupFailedDaemonStartupMetadata removes partial startup metadata', asyn
 
     assert.deepEqual(result, {
       reason: 'startup_timeout',
-      removedInfo: true,
-      removedLock: true,
+      removedInfo: false,
+      removedLock: false,
       stoppedInfoProcess: false,
       stoppedLockProcess: false,
+      retainedInfoProcess: true,
+      retainedLockProcess: true,
+      error: 'Daemon info metadata is malformed and cannot be verified',
     });
-    assert.equal(fs.existsSync(paths.infoPath), false);
-    assert.equal(fs.existsSync(paths.lockPath), false);
+    assert.equal(fs.existsSync(paths.infoPath), true);
+    assert.equal(fs.existsSync(paths.lockPath), true);
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
@@ -300,9 +303,7 @@ test('cleanupFailedDaemonStartupMetadata retains live startup daemon on timeout'
       'utf8',
     );
 
-    const result = await cleanupFailedDaemonStartupMetadata(paths, 'startup_timeout', {
-      stopLiveProcesses: false,
-    });
+    const result = await cleanupFailedDaemonStartupMetadata(paths, 'startup_timeout');
 
     assert.equal(result.retainedInfoProcess, true);
     assert.equal(result.retainedLockProcess, true);
@@ -344,9 +345,7 @@ test('cleanupFailedDaemonStartupMetadata removes stale daemon metadata on timeou
       'utf8',
     );
 
-    const result = await cleanupFailedDaemonStartupMetadata(paths, 'startup_timeout', {
-      stopLiveProcesses: false,
-    });
+    const result = await cleanupFailedDaemonStartupMetadata(paths, 'startup_timeout');
 
     assert.equal(result.removedInfo, true);
     assert.equal(result.removedLock, true);

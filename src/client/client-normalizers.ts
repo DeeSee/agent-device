@@ -50,14 +50,33 @@ export function normalizeDeployResult(
 ): AppDeployResult {
   const bundleId = readOptionalString(data, 'bundleId');
   const pkg = readOptionalString(data, 'package');
+  const platform = readRequiredPlatform(data, 'platform');
+  const hasDeviceId = Object.hasOwn(data, 'deviceId');
+  const hasDeviceName = Object.hasOwn(data, 'deviceName');
+  if (hasDeviceId !== hasDeviceName) {
+    throw new AppError(
+      'COMMAND_FAILED',
+      'Daemon returned an incomplete deployment device identity.',
+    );
+  }
+  const deviceIdentity = hasDeviceId
+    ? buildDeviceIdentifiers(
+        platform,
+        readRequiredString(data, 'deviceId'),
+        readRequiredString(data, 'deviceName'),
+      )
+    : {};
   return {
     app: readRequiredString(data, 'app'),
     appPath: readRequiredString(data, 'appPath'),
-    platform: readRequiredPlatform(data, 'platform'),
+    platform,
     appId: bundleId ?? pkg,
     bundleId,
     package: pkg,
-    identifiers: buildAppIdentifiers({ session, bundleId, packageName: pkg }),
+    identifiers: {
+      ...buildAppIdentifiers({ session, bundleId, packageName: pkg }),
+      ...deviceIdentity,
+    },
   };
 }
 
@@ -144,14 +163,21 @@ export function normalizeSession(value: unknown): AgentDeviceSession {
   const { record, platform, id, name, target } = readClientDeviceIdentity(value, 'name');
   const deviceName = readRequiredString(record, 'device');
   const appleOs = readAppleOs(record);
-  const identifiers = {
+  const appBundleId = readOptionalString(record, 'appBundleId');
+  const deviceIdentifiers = {
     session: name,
     ...buildDeviceIdentifiers(platform, id, deviceName),
+  };
+  const identifiers = {
+    ...deviceIdentifiers,
+    ...buildAppIdentifiers({ session: name, bundleId: appBundleId }),
   };
   return {
     name,
     address: readOptionalString(record, 'address'),
     createdAt: readRequiredNumber(record, 'createdAt'),
+    lifecycle: readSessionLifecycle(record),
+    appBundleId,
     sessionStateDir: readOptionalString(record, 'sessionStateDir'),
     runnerLogPath: readOptionalString(record, 'runnerLogPath'),
     device: {
@@ -161,13 +187,27 @@ export function normalizeSession(value: unknown): AgentDeviceSession {
       name: deviceName,
       // Additive Apple-OS discriminant; present only when the daemon emits it (Apple devices).
       ...(appleOs ? { appleOs } : {}),
-      identifiers,
+      identifiers: deviceIdentifiers,
       ...buildClientDevicePlatformFields(platform, id, {
         simulatorSetPath: readNullableString(record, 'ios_simulator_device_set'),
       }),
     },
     identifiers,
   };
+}
+
+function readSessionLifecycle(record: Record<string, unknown>): AgentDeviceSession['lifecycle'] {
+  const value = record.lifecycle;
+  if (value === undefined) return undefined;
+  if (
+    value === 'reserved' ||
+    value === 'opening' ||
+    value === 'opened' ||
+    value === 'close_retry_required'
+  ) {
+    return value;
+  }
+  throw new AppError('COMMAND_FAILED', 'Daemon returned an invalid session lifecycle.');
 }
 
 function readAppleOs(record: Record<string, unknown>): AppleOS | undefined {

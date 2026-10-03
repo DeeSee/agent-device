@@ -7,12 +7,7 @@ import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import { resolveCommandTimeoutPolicy } from '@agent-device/command-registry/registry';
 import type { DaemonPaths } from '../daemon-resolution.ts';
 import type { PlatformSelector } from '@agent-device/kernel/device';
-import {
-  removeDaemonInfo,
-  removeDaemonLock,
-  stopDaemonProcessForTakeover,
-  type DaemonInfo,
-} from './daemon-client-metadata.ts';
+import type { DaemonInfo } from './daemon-client-metadata.ts';
 
 const IOS_RUNNER_XCODEBUILD_KILL_PATTERNS = [
   'xcodebuild .*AgentDeviceRunnerUITests/RunnerTests/testCommand',
@@ -54,8 +49,7 @@ export function handleRequestTimeout(
     action?: string;
   }>,
 ): AppError {
-  const { info, statePaths, remote, timeoutMs, requestId, command, platform, session, action } =
-    params;
+  const { info, remote, timeoutMs, requestId, command, platform, session, action } = params;
   // Cleanup eligibility stays UNCONDITIONAL for every local (non-remote)
   // timeout, on purpose: the request's declared --platform is not
   // authoritative for session-bound execution. An existing session's real
@@ -63,15 +57,14 @@ export function handleRequestTimeout(
   // (`applyStripLockPolicy` in request-lock-policy.ts, reached via
   // --session-lock strip), and the common session-bound request omits
   // --platform entirely — so there is no client-visible signal that proves
-  // a request cannot touch an Apple runner. The pkill patterns are
+  // a request cannot touch an Apple runner. For ordinary policies the pkill patterns are
   // Apple-process-name-specific, so sweeping them on a non-Apple host or
   // session matches nothing and costs a few no-op subprocess spawns, never
   // a wrong skip.
-  const cleanup = remote ? { terminated: 0 } : cleanupTimedOutIosRunnerBuilds();
+  const preserveRunner = shouldPreserveRunnerAfterRequestTimeout(command);
+  const cleanup = remote || preserveRunner ? { terminated: 0 } : cleanupTimedOutIosRunnerBuilds();
   const resetDaemon = !remote && shouldResetDaemonAfterRequestTimeout(command);
-  const daemonReset = resetDaemon
-    ? resetDaemonAfterTimeout(info, statePaths)
-    : { forcedKill: false };
+  const daemonReset = resetDaemon ? resetDaemonAfterTimeout(info) : { forcedKill: false };
   // The HINT, unlike cleanup, may only name Apple-runner involvement on
   // evidence this call site actually has: an explicitly declared Apple
   // platform selector, or the cleanup itself having terminated a matching
@@ -88,10 +81,11 @@ export function handleRequestTimeout(
       requestId,
       command,
       timedOutRunnerPidsTerminated: cleanup.terminated,
+      timedOutRunnerCleanupSkipped: !remote && preserveRunner,
       timedOutRunnerCleanupError: cleanup.error,
       daemonPidReset: resetDaemon ? info.pid : undefined,
       daemonPidForceKilled: resetDaemon ? daemonReset.forcedKill : undefined,
-      daemonPreservedAfterTimeout: !remote && !resetDaemon,
+      daemonMetadataPreservedAfterTimeout: !remote,
       daemonBaseUrl: info.baseUrl,
     },
   });
@@ -102,6 +96,7 @@ export function handleRequestTimeout(
     hint: resolveRequestTimeoutHint({
       remote,
       resetDaemon,
+      preserveRunner,
       command,
       appleCleanupEvidence,
       session,
@@ -119,6 +114,10 @@ function shouldResetDaemonAfterRequestTimeout(command: string | undefined): bool
   return resolveCommandTimeoutPolicy(command).onTimeout === 'reset-daemon';
 }
 
+export function shouldPreserveRunnerAfterRequestTimeout(command: string | undefined): boolean {
+  return resolveCommandTimeoutPolicy(command).onTimeout === 'preserve-daemon-and-runner';
+}
+
 // Exported for direct hint-matrix testing: handleRequestTimeout also triggers
 // real pkill/process-kill side effects, so its wording is verified through
 // this pure sub-function rather than the full timeout path (see also the
@@ -129,13 +128,22 @@ function shouldResetDaemonAfterRequestTimeout(command: string | undefined): bool
 export function resolveRequestTimeoutHint(params: {
   remote: boolean;
   resetDaemon: boolean;
+  preserveRunner?: boolean;
   command: string | undefined;
   appleCleanupEvidence: boolean;
   /** The request's first positional, for commands whose recovery depends on which action ran. */
   action?: string;
   session?: string;
 }): string {
-  const { remote, resetDaemon, command, appleCleanupEvidence, session, action } = params;
+  const {
+    remote,
+    resetDaemon,
+    preserveRunner = false,
+    command,
+    appleCleanupEvidence,
+    session,
+    action,
+  } = params;
   if (remote) {
     // A remote daemon survives this client window, so a `record stop` that ran out of time is still
     // exporting there and its finished file stays retrievable by asking again. A local timeout
@@ -148,6 +156,9 @@ export function resolveRequestTimeoutHint(params: {
     return 'Retry with --debug and verify the remote daemon URL, auth token, and remote host logs.';
   }
   if (!resetDaemon) {
+    if (preserveRunner) {
+      return `Retry with --debug and check daemon diagnostics logs. The timed-out ${command ?? 'request'} request was canceled; the daemon and XCTest runner were kept alive so the exact durable resource can be retried or recovered.`;
+    }
     const iosPrepareHint =
       appleCleanupEvidence && command === PUBLIC_COMMANDS.snapshot
         ? ' If this was the first Apple-platform snapshot on the device, run agent-device prepare ios-runner with the same --platform before snapshot/test so runner startup is handled explicitly.'
@@ -157,9 +168,11 @@ export function resolveRequestTimeoutHint(params: {
       : '';
     return `Retry with --debug and check daemon diagnostics logs. The timed-out ${command ?? 'request'} request was canceled${appleCleanupNote}; the daemon was kept alive so the session can still be closed or inspected.${iosPrepareHint}`;
   }
+  const resetNote =
+    ' The daemon reset was requested; its metadata remains until a later client confirms that the exact process exited.';
   return appleCleanupEvidence
-    ? 'Retry with --debug and check daemon diagnostics logs. Timed-out Apple runner xcodebuild processes were terminated when detected.'
-    : 'Retry with --debug and check daemon diagnostics logs. The daemon was reset after the timeout.';
+    ? `Retry with --debug and check daemon diagnostics logs. Timed-out Apple runner xcodebuild processes were terminated when detected.${resetNote}`
+    : `Retry with --debug and check daemon diagnostics logs.${resetNote}`;
 }
 
 function cleanupTimedOutIosRunnerBuilds(): { terminated: number; error?: string } {
@@ -178,18 +191,16 @@ function cleanupTimedOutIosRunnerBuilds(): { terminated: number; error?: string 
   }
 }
 
-function resetDaemonAfterTimeout(info: DaemonInfo, paths: DaemonPaths): { forcedKill: boolean } {
+function resetDaemonAfterTimeout(info: DaemonInfo): { forcedKill: boolean } {
   let forcedKill = false;
   try {
     if (isAgentDeviceDaemonProcess(info.pid, info.processStartTime)) {
       process.kill(info.pid, 'SIGKILL');
       forcedKill = true;
     }
-  } catch {
-    void stopDaemonProcessForTakeover(info);
-  } finally {
-    removeDaemonInfo(paths.infoPath);
-    removeDaemonLock(paths.lockPath);
-  }
+  } catch {}
+  // Keep daemon metadata even after signaling. A synchronous timeout handler cannot prove that
+  // the exact PID/start-time owner exited, and deleting its authority here would allow the next
+  // request to spawn a competing daemon. The ordinary takeover path performs that verification.
   return { forcedKill };
 }

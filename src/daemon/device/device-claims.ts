@@ -1,3 +1,9 @@
+import { AppError } from '@agent-device/kernel/errors';
+import {
+  assertDeviceClaimRoot,
+  deviceClaimBindingId,
+  type DeviceClaimRoot,
+} from '../../device-claim-root.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +30,7 @@ import type { TakenOverDeviceClaim } from './device-claim-reboot.ts';
 import {
   canonicalLocalDeviceKey,
   resolveDeviceClaimPath,
-  resolveDeviceClaimRoot,
+  isDeviceClaimFileNameForRoot,
 } from './device-claim-paths.ts';
 import {
   DEVICE_CLAIM_SCHEMA_VERSION,
@@ -77,6 +83,7 @@ export async function acquireDeviceClaim(params: {
   session: string;
   workspace: string;
   stateDir: string;
+  deviceClaimRoot: DeviceClaimRoot;
   reconcileOrphanedDeviceClaim: DeviceClaimReconciler;
   /**
    * Asks the device whether it rebooted after a foreign claim was taken, which is the only proof
@@ -88,6 +95,7 @@ export async function acquireDeviceClaim(params: {
   const deviceKey = canonicalLocalDeviceKey(identity);
   return await withDeviceClaimLock(
     deviceKey,
+    params.deviceClaimRoot,
     async () => await claimHeldDevice({ ...params, deviceKey, identity }),
   );
 }
@@ -106,14 +114,18 @@ export async function acquireTransientDeviceClaim(params: {
   command: string;
   workspace: string;
   stateDir: string;
+  deviceClaimRoot: DeviceClaimRoot;
   reconcileOrphanedDeviceClaim: DeviceClaimReconciler;
 }): Promise<TransientDeviceClaimResult> {
   const identity = deviceClaimIdentity(params.device);
   const deviceKey = canonicalLocalDeviceKey(identity);
-  return await withDeviceClaimLock(deviceKey, async () => {
-    const existing = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey));
+  return await withDeviceClaimLock(deviceKey, params.deviceClaimRoot, async () => {
+    const existing = inspectDeviceClaimFile(
+      resolveDeviceClaimPath(deviceKey, params.deviceClaimRoot),
+    );
     if (
       existing?.claim &&
+      existing.claim.session === transientDeviceClaimSession(params.command) &&
       !isAbandonedDeviceClaim(existing.claim) &&
       isClaimOwnedByThisDaemon(existing.claim, params.stateDir, readCurrentOwnerIdentity())
     ) {
@@ -126,6 +138,7 @@ export async function acquireTransientDeviceClaim(params: {
       session: transientDeviceClaimSession(params.command),
       workspace: params.workspace,
       stateDir: params.stateDir,
+      deviceClaimRoot: params.deviceClaimRoot,
       reconcileOrphanedDeviceClaim: params.reconcileOrphanedDeviceClaim,
     });
   });
@@ -139,6 +152,7 @@ async function claimHeldDevice(params: {
   session: string;
   workspace: string;
   stateDir: string;
+  deviceClaimRoot: DeviceClaimRoot;
   reconcileOrphanedDeviceClaim: DeviceClaimReconciler;
   observeDeviceBoot?: DeviceBootObservationService;
 }): Promise<DeviceClaimAcquireResult> {
@@ -167,10 +181,10 @@ async function claimHeldDevice(params: {
     createdAtMs: now,
     updatedAtMs: now,
   };
-  writeDeviceClaim(claim);
+  writeDeviceClaim(claim, params.deviceClaimRoot);
   return {
     status: 'acquired',
-    ownership: ownershipFromClaim(claim),
+    ownership: ownershipFromClaim(claim, params.deviceClaimRoot),
     ...(existing.tookOver ? { tookOver: existing.tookOver } : {}),
   };
 }
@@ -185,9 +199,12 @@ async function claimHeldDevice(params: {
  * alone — one process serves one daemon — and an abandoned claim holds the
  * device for nobody, so it grants no authority either.
  */
-export function processOwnsActiveDeviceClaim(device: DeviceInfo): boolean {
+export function processOwnsActiveDeviceClaim(
+  device: DeviceInfo,
+  deviceClaimRoot: DeviceClaimRoot,
+): boolean {
   const deviceKey = canonicalLocalDeviceKey(deviceClaimIdentity(device));
-  const claim = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey))?.claim;
+  const claim = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey, deviceClaimRoot))?.claim;
   return (
     claim !== undefined &&
     claim.deviceKey === deviceKey &&
@@ -236,11 +253,14 @@ export type DeviceClaimStaleReleaseOutcome = {
  */
 export async function releaseProvenStaleDeviceClaims(params: {
   selectors: DeviceClaimSelectors;
+  deviceClaimRoot: DeviceClaimRoot;
   reconcile: DeviceClaimReconciler;
 }): Promise<DeviceClaimStaleReleaseOutcome[]> {
   const outcomes: DeviceClaimStaleReleaseOutcome[] = [];
-  for (const entry of inspectDeviceClaims(params.selectors)) {
-    outcomes.push(await releaseInspectedStaleClaim(entry, params.reconcile));
+  for (const entry of inspectDeviceClaims(params.selectors, params.deviceClaimRoot)) {
+    outcomes.push(
+      await releaseInspectedStaleClaim(entry, params.reconcile, params.deviceClaimRoot),
+    );
   }
   return outcomes;
 }
@@ -248,6 +268,7 @@ export async function releaseProvenStaleDeviceClaims(params: {
 async function releaseInspectedStaleClaim(
   entry: InspectedDeviceClaim,
   reconcile: DeviceClaimReconciler,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<DeviceClaimStaleReleaseOutcome> {
   const claim = entry.claim;
   const base = {
@@ -276,13 +297,14 @@ async function releaseInspectedStaleClaim(
   // A file whose name is not the hash of its own device key is not the file
   // the claim lock protects; releasing through it could unlink something else.
   if (
-    resolveDeviceClaimPath(claim.deviceKey) !== path.join(resolveDeviceClaimRoot(), entry.fileName)
+    resolveDeviceClaimPath(claim.deviceKey, deviceClaimRoot) !==
+    path.join(deviceClaimRoot.path, entry.fileName)
   ) {
     return { ...base, status: 'refused', reason: 'claim-file-name-mismatch' };
   }
   const { deviceKey, ownerToken } = claim;
-  return await withDeviceClaimLock(deviceKey, async () => {
-    const current = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey));
+  return await withDeviceClaimLock(deviceKey, deviceClaimRoot, async () => {
+    const current = inspectDeviceClaimFile(resolveDeviceClaimPath(deviceKey, deviceClaimRoot));
     if (
       !current?.claim ||
       current.claim.ownerToken !== ownerToken ||
@@ -290,7 +312,7 @@ async function releaseInspectedStaleClaim(
     ) {
       return { ...base, status: 'changed' as const, reason: 'claim-changed-during-release' };
     }
-    const result = await settleVerifiedOrphanedClaim(current.claim, reconcile);
+    const result = await settleVerifiedOrphanedClaim(current.claim, reconcile, deviceClaimRoot);
     if (result.status === 'retained') {
       return { ...base, status: 'retained' as const, reason: result.reason };
     }
@@ -346,10 +368,12 @@ export type DeviceClaimClearOutcome = 'deleted' | 'absent' | 'ownership-changed'
 
 export async function clearDeviceClaim(
   ownership: DeviceClaimSessionOwnership | undefined,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<DeviceClaimClearOutcome> {
   if (!ownership) return 'absent';
   return await writeOwnedDeviceClaim(
     ownership,
+    deviceClaimRoot,
     (_claim, claimPath) => {
       try {
         fs.unlinkSync(claimPath);
@@ -384,13 +408,15 @@ export type DeviceClaimAbandonOutcome = 'abandoned' | 'absent' | 'ownership-chan
  */
 export async function abandonDeviceClaim(
   ownership: DeviceClaimSessionOwnership | undefined,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<DeviceClaimAbandonOutcome> {
   if (!ownership) return 'absent';
   return await writeOwnedDeviceClaim(
     ownership,
+    deviceClaimRoot,
     (claim) => {
       const now = Date.now();
-      writeDeviceClaim({ ...claim, abandonedAtMs: now, updatedAtMs: now });
+      writeDeviceClaim({ ...claim, abandonedAtMs: now, updatedAtMs: now }, deviceClaimRoot);
       return 'abandoned';
     },
     (conflict) => (conflict ? 'ownership-changed' : 'absent'),
@@ -416,12 +442,14 @@ export type DeviceClaimRenewal =
  */
 export async function renewDeviceClaim(
   ownership: DeviceClaimSessionOwnership | undefined,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<DeviceClaimRenewal> {
   if (!ownership) return { status: 'lost', conflict: undefined };
   return await writeOwnedDeviceClaim(
     ownership,
+    deviceClaimRoot,
     (claim) => {
-      writeDeviceClaim({ ...claim, updatedAtMs: Date.now() });
+      writeDeviceClaim({ ...claim, updatedAtMs: Date.now() }, deviceClaimRoot);
       return { status: 'renewed' } as const;
     },
     (conflict) => ({ status: 'lost' as const, conflict }),
@@ -434,16 +462,35 @@ export async function renewDeviceClaim(
  */
 async function writeOwnedDeviceClaim<O, L>(
   ownership: DeviceClaimSessionOwnership,
+  deviceClaimRoot: DeviceClaimRoot,
   act: (claim: DeviceClaim, claimPath: string) => O,
   lost: (conflict: InspectedDeviceClaim | undefined) => L,
 ): Promise<O | L> {
-  return await withDeviceClaimLock(ownership.deviceKey, async () => {
-    const claimPath = resolveDeviceClaimPath(ownership.deviceKey);
+  assertDeviceClaimRoot(deviceClaimRoot);
+  if (
+    ownership.claimBindingId !==
+      deviceClaimBindingId(deviceClaimRoot, ownership.deviceKey, ownership.ownerToken) &&
+    ownership.claimRootId === deviceClaimRoot.id
+  ) {
+    throw new AppError('COMMAND_FAILED', 'Device claim binding does not match this ownership.', {
+      reason: 'device_claim_binding_mismatch',
+    });
+  }
+  if (ownership.claimRootId !== deviceClaimRoot.id) {
+    throw new AppError('COMMAND_FAILED', 'Device claim ownership does not belong to this root.', {
+      reason: 'device_claim_root_mismatch',
+    });
+  }
+  return await withDeviceClaimLock(ownership.deviceKey, deviceClaimRoot, async () => {
+    const claimPath = resolveDeviceClaimPath(ownership.deviceKey, deviceClaimRoot);
     const inspected = inspectDeviceClaimFile(claimPath);
     if (!inspected) return lost(undefined);
     const claim = inspected.claim;
     if (!claim || !claimMatchesOwnership(claim, ownership)) return lost(inspected);
-    return act(claim, claimPath);
+    assertDeviceClaimRoot(deviceClaimRoot);
+    const result = act(claim, claimPath);
+    assertDeviceClaimRoot(deviceClaimRoot);
+    return result;
   });
 }
 
@@ -482,21 +529,18 @@ function claimMatchesOwnership(
 export async function reconcileOrphanedDeviceClaims(
   reconcile: DeviceClaimReconciler,
   daemonStateDir: string,
+  deviceClaimRoot: DeviceClaimRoot,
 ): Promise<{ examined: number; reconciled: number; retained: number; changed: number }> {
-  const root = resolveDeviceClaimRoot();
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return { examined: 0, reconciled: 0, retained: 0, changed: 0 };
-  }
+  assertDeviceClaimRoot(deviceClaimRoot);
+  const entries = fs.readdirSync(deviceClaimRoot.path, { withFileTypes: true });
+  assertDeviceClaimRoot(deviceClaimRoot);
   let examined = 0;
   let reconciled = 0;
   let retained = 0;
   let changed = 0;
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const filePath = path.join(root, entry.name);
+    if (!entry.isFile() || !isDeviceClaimFileNameForRoot(entry.name, deviceClaimRoot)) continue;
+    const filePath = path.join(deviceClaimRoot.path, entry.name);
     const scanned = inspectDeviceClaimFile(filePath);
     if (
       !scanned?.claim ||
@@ -508,11 +552,11 @@ export async function reconcileOrphanedDeviceClaims(
     const { deviceKey, ownerToken } = scanned.claim;
     // A file whose name is not the hash of its own device key is not the file
     // the lock protects, so leave it rather than unlink something else.
-    if (resolveDeviceClaimPath(deviceKey) !== filePath) {
+    if (resolveDeviceClaimPath(deviceKey, deviceClaimRoot) !== filePath) {
       retained += 1;
       continue;
     }
-    await withDeviceClaimLock(deviceKey, async () => {
+    await withDeviceClaimLock(deviceKey, deviceClaimRoot, async () => {
       const current = inspectDeviceClaimFile(filePath);
       if (
         !current?.claim ||
@@ -522,7 +566,7 @@ export async function reconcileOrphanedDeviceClaims(
         changed += 1;
         return;
       }
-      const result = await settleVerifiedOrphanedClaim(current.claim, reconcile);
+      const result = await settleVerifiedOrphanedClaim(current.claim, reconcile, deviceClaimRoot);
       if (result.status === 'retained') {
         retained += 1;
         return;

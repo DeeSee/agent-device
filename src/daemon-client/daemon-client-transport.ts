@@ -1,6 +1,6 @@
 import type { RequestProgressSink } from '@agent-device/contracts/progress';
 import net from 'node:net';
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
 import { loadNodeHttpRequester, readNodeHttpResponseBody } from '@agent-device/host-kit/transport';
 import type { DaemonRequest, DaemonResponse } from '../daemon/daemon-request.ts';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
@@ -26,6 +26,7 @@ import { readVersion } from '@agent-device/host-kit/version';
 type ResolvedDaemonTransport = 'socket' | 'http';
 type SendRequestOptions = {
   onProgress?: RequestProgressSink;
+  signal?: AbortSignal;
 };
 
 const LOCAL_DAEMON_HEALTHCHECK_TIMEOUT_MS = 500;
@@ -238,6 +239,7 @@ export async function sendRequest(
   timeoutMs: number | undefined,
   options: SendRequestOptions = {},
 ): Promise<DaemonResponse> {
+  throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
   const transport = chooseTransport(info, preference);
   const deadline = typeof timeoutMs === 'number' ? performance.now() + timeoutMs : undefined;
   try {
@@ -452,27 +454,49 @@ async function sendSocketRequest(
 ): Promise<DaemonResponse> {
   const port = info.port;
   if (!port) throw daemonEndpointUnavailableError('socket');
+  throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
   return new Promise((resolve, reject) => {
     let requestWritten = false;
+    let settled = false;
+    let abortRequest = (): void => {};
+    const finish = (task: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', abortRequest);
+      task();
+    };
     const socket = net.createConnection({ host: '127.0.0.1', port }, () => {
+      if (settled) return;
       requestWritten = true;
       socket.write(`${JSON.stringify(req)}\n`);
     });
-    let settled = false;
+    abortRequest = (): void => {
+      finish(() => {
+        socket.destroy();
+        reject(createRequestCanceledError({ requestId: req.meta?.requestId }));
+      });
+    };
     const timeoutHandle =
       typeof timeoutMs === 'number'
         ? setTimeout(() => {
-            settled = true;
             socket.destroy();
-            reject(
-              handleRequestTimeout({
-                info,
-                statePaths,
-                ...timeoutRequestContext(req, false, timeoutMs),
-              }),
+            finish(() =>
+              reject(
+                handleRequestTimeout({
+                  info,
+                  statePaths,
+                  ...timeoutRequestContext(req, false, timeoutMs),
+                }),
+              ),
             );
           }, timeoutMs)
         : undefined;
+    options.signal?.addEventListener('abort', abortRequest, { once: true });
+    if (options.signal?.aborted) {
+      abortRequest();
+      return;
+    }
 
     readDaemonSocketProgressResponse(socket, {
       req,
@@ -482,23 +506,21 @@ async function sendSocketRequest(
         if (timeoutHandle) clearTimeout(timeoutHandle);
       },
       resolve: (response) => {
-        settled = true;
-        resolve(response);
+        finish(() => resolve(response));
       },
       reject: (error) => {
-        settled = true;
-        reject(error);
+        finish(() => reject(error));
       },
     });
 
     socket.on('error', (err) => {
       if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      reject(
-        handleTransportError(err, req.meta?.requestId, false, {
-          daemonSocketRequestWritten: requestWritten,
-        }),
+      finish(() =>
+        reject(
+          handleTransportError(err, req.meta?.requestId, false, {
+            daemonSocketRequestWritten: requestWritten,
+          }),
+        ),
       );
     });
   });
@@ -553,6 +575,7 @@ async function sendHttpRequest(
       ? new URL(`http://127.0.0.1:${info.httpPort}/rpc`)
       : null;
   if (!rpcUrl) throw daemonEndpointUnavailableError('http');
+  throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
   const rpcPayload = JSON.stringify(buildHttpRpcPayload(req, { includeTokenParam: !info.baseUrl }));
   const headers: Record<string, string | number> = {
     'content-type': 'application/json',
@@ -563,8 +586,21 @@ async function sendHttpRequest(
     Object.assign(headers, buildRemoteInstancePreconditionHeaders(info));
   }
   const transport = await loadNodeHttpRequester(rpcUrl.protocol);
+  throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
 
   return await new Promise((resolve, reject) => {
+    let settled = false;
+    let abortRequest = (): void => {};
+    const finish = (task: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', abortRequest);
+      task();
+    };
+    const finishResolve = (response: DaemonResponse | PromiseLike<DaemonResponse>): void =>
+      finish(() => resolve(response));
+    const finishReject = (error: unknown): void => finish(() => reject(error));
     const request = transport.request(
       {
         protocol: rpcUrl.protocol,
@@ -590,7 +626,7 @@ async function sendHttpRequest(
           readDaemonHttpProgressResponse(res, {
             req,
             onProgress: options.onProgress,
-            reject,
+            reject: finishReject,
             clearTimeout: () => {
               if (timeoutHandle) clearTimeout(timeoutHandle);
             },
@@ -599,8 +635,8 @@ async function sendHttpRequest(
                 info,
                 req,
                 stateDir: statePaths.baseDir,
-                resolve,
-                reject,
+                resolve: finishResolve,
+                reject: finishReject,
               });
             },
           });
@@ -616,28 +652,32 @@ async function sendHttpRequest(
         });
         void responseBody
           .then((body) => {
-            if (timeoutHandle) clearTimeout(timeoutHandle);
             handleDaemonHttpResponseBody(body, {
               info,
               req,
               stateDir: statePaths.baseDir,
-              resolve,
-              reject,
+              resolve: finishResolve,
+              reject: finishReject,
             });
           })
           .catch((error: unknown) => {
-            if (timeoutHandle) clearTimeout(timeoutHandle);
-            reject(error);
+            finishReject(error);
           });
       },
     );
 
+    abortRequest = (): void => {
+      finish(() => {
+        request.destroy();
+        reject(createRequestCanceledError({ requestId: req.meta?.requestId }));
+      });
+    };
     const remote = isRemoteDaemon(info);
     const timeoutHandle =
       typeof timeoutMs === 'number'
         ? setTimeout(() => {
             request.destroy();
-            reject(
+            finishReject(
               handleRequestTimeout({
                 info,
                 statePaths,
@@ -646,10 +686,14 @@ async function sendHttpRequest(
             );
           }, timeoutMs)
         : undefined;
+    options.signal?.addEventListener('abort', abortRequest, { once: true });
+    if (options.signal?.aborted) {
+      abortRequest();
+      return;
+    }
 
     request.on('error', (err) => {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      reject(handleTransportError(err, req.meta?.requestId, remote));
+      finishReject(handleTransportError(err, req.meta?.requestId, remote));
     });
 
     request.write(rpcPayload);
@@ -712,4 +756,11 @@ export async function cachedRemoteDaemonHealth(info: DaemonInfo): Promise<Remote
     if (remoteHealthCache === entry) remoteHealthCache = undefined;
     throw error;
   }
+}
+
+function throwIfTransportRequestAborted(
+  signal: AbortSignal | undefined,
+  requestId: string | undefined,
+): void {
+  if (signal?.aborted) throw createRequestCanceledError({ requestId });
 }

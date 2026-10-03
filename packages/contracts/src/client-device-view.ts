@@ -6,7 +6,12 @@ import type {
   DeviceTarget,
   PublicPlatform,
 } from '@agent-device/kernel/device';
-import type { AgentDeviceIdentifiers, DeviceCommandBaseOptions } from './client-connection.ts';
+import type {
+  AgentDeviceIdentifiers,
+  AgentDeviceRequestOverrides,
+  AgentDeviceSelectionOptions,
+  DeviceCommandBaseOptions,
+} from './client-connection.ts';
 
 export type AgentDeviceDevice = {
   platform: PublicPlatform;
@@ -89,8 +94,28 @@ export type AgentDeviceSession = {
    */
   address?: string;
   createdAt: number;
+  /** Additive lifecycle observation for idempotent clients reconciling an interrupted request. */
+  lifecycle?: 'reserved' | 'opening' | 'opened' | 'close_retry_required';
+  /** Present when the session has been bound to an application. */
+  appBundleId?: string;
   sessionStateDir?: string;
   runnerLogPath?: string;
+  device: AgentDeviceSessionDevice;
+  identifiers: AgentDeviceIdentifiers;
+};
+
+type ExactSessionTargetSelector =
+  | { device: string; udid?: never; serial?: never }
+  | { device?: never; udid: string; serial?: never }
+  | { device?: never; udid?: never; serial: string };
+
+export type SessionReserveOptions = AgentDeviceRequestOverrides &
+  Omit<AgentDeviceSelectionOptions, 'device' | 'udid' | 'serial'> &
+  ExactSessionTargetSelector;
+
+export type SessionReserveResult = {
+  session: string;
+  status: 'created' | 'already_reserved';
   device: AgentDeviceSessionDevice;
   identifiers: AgentDeviceIdentifiers;
 };

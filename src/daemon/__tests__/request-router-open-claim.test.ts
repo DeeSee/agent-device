@@ -1,3 +1,4 @@
+import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 import { test, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
@@ -158,7 +159,9 @@ test('open takes a live foreign claim whose device rebooted after the claim was 
     expect(response.data?.warnings).toContain(
       'Took the device from session "shared" in workspace "/worktrees/live": that device rebooted after its claim was taken, so its app and runner were already gone.',
     );
-    expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.session).toBe('reboot-takeover');
+    expect(
+      inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.session,
+    ).toBe('reboot-takeover');
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;
@@ -205,7 +208,9 @@ test('open renews the claim of an existing session that reopened its app after a
     expect(foreign.ok).toBe(false);
     if (foreign.ok) return;
     expect(foreign.error.code).toBe('DEVICE_IN_USE');
-    expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.session).toBe('renew-owner');
+    expect(
+      inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.session,
+    ).toBe('renew-owner');
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;
@@ -242,9 +247,9 @@ test('an owner reopen that lost the device mid-flight reports the loss instead o
       expect(reopened.error.code).toBe('DEVICE_IN_USE');
       expect(reopened.error.message).toContain('shared');
     }
-    expect(inspectDeviceClaims({ udid: device.id })[0]?.claim?.ownerToken).toBe(
-      'reboot-takeover-token',
-    );
+    expect(
+      inspectDeviceClaims({ udid: device.id }, currentTestDeviceClaimRoot())[0]?.claim?.ownerToken,
+    ).toBe('reboot-takeover-token');
   } finally {
     if (previousClaimsDir === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaimsDir;

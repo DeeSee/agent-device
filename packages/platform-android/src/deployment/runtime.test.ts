@@ -50,10 +50,20 @@ test.each([
 ] as const)(
   'classifies Android deployment facts for the %s denominator cell',
   (_name, runtimeDevice, available) => {
-    for (const fact of Object.values(androidAppDeploymentFacts(runtimeDevice))) {
+    const facts = androidAppDeploymentFacts(runtimeDevice);
+    for (const fact of [
+      facts.deployApp,
+      facts.materializeAppSource,
+      facts.deployMaterializedApp,
+      facts.sendPushNotification,
+    ]) {
       expect(fact.available).toBe(available);
       if (!available) expect(fact).toMatchObject({ reason: 'unsupported-device-kind' });
     }
+    expect(facts.writeAppContainerJson).toMatchObject({
+      available: false,
+      reason: 'unsupported-platform-leaf',
+    });
   },
 );
 
@@ -176,6 +186,66 @@ test('preserves reinstall partial-failure ordering and whole-operation cache inv
   expect(order).toEqual(['cache-before', 'resolve', 'uninstall', 'prepare', 'cache-after']);
   expect(cacheCalls).toEqual([device]);
   expect(native.installAndroidArtifact).not.toHaveBeenCalled();
+});
+
+test('derives Android reinstall identity from the prepared artifact when app is omitted', async () => {
+  const order: string[] = [];
+  const cleanup = vi.fn(async () => {
+    order.push('cleanup');
+  });
+  const resolveAppPackage = vi.fn();
+  const host = hostFixture({
+    resolveAppPackage,
+    prepareArtifact: async (_input, options) => {
+      expect(options).toMatchObject({ resolveIdentity: true });
+      order.push('prepare');
+      return {
+        installablePath: '/tmp/replacement.apk',
+        packageName: 'com.example.derived',
+        cleanup,
+      };
+    },
+  });
+  native.uninstallAndroidPackage.mockImplementationOnce(async () => {
+    order.push('uninstall');
+  });
+  native.installAndroidArtifact.mockImplementationOnce(async () => {
+    order.push('install');
+    return 'com.example.derived';
+  });
+
+  await expect(
+    createAndroidAppDeploymentOperations({
+      host,
+      device,
+      signal: new AbortController().signal,
+    }).deployApp?.({ app: '', appPath: '/tmp/replacement.apk', replaceExisting: true }),
+  ).resolves.toEqual({
+    packageName: 'com.example.derived',
+    launchTarget: 'com.example.derived',
+  });
+
+  expect(order).toEqual(['prepare', 'uninstall', 'install', 'cleanup']);
+  expect(resolveAppPackage).not.toHaveBeenCalled();
+});
+
+test('refuses identity-less Android replacement artifacts before device effects', async () => {
+  const cleanup = vi.fn(async () => {});
+  const operations = createAndroidAppDeploymentOperations({
+    host: hostFixture({
+      prepareArtifact: async () => ({ installablePath: '/tmp/replacement.apk', cleanup }),
+      resolveAppPackage: vi.fn(),
+    }),
+    device,
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    operations.deployApp?.({ app: '', appPath: '/tmp/replacement.apk', replaceExisting: true }),
+  ).rejects.toMatchObject({ code: 'INVALID_ARGS' });
+  expect(native.uninstallAndroidPackage).not.toHaveBeenCalled();
+  expect(native.installAndroidArtifact).not.toHaveBeenCalled();
+  expect(cleanup).toHaveBeenCalledOnce();
 });
 
 test('keeps ordinary Android install successful when identity is unavailable', async () => {
