@@ -20,6 +20,7 @@ const DAEMON_SESSION_LIFECYCLE_FACADE = {
     'handleSessionCloseCommands',
     'handleSessionInventoryCommands',
     'handleSessionOpenCommands',
+    'handleSessionReserveCommand',
   ],
 } as const;
 
