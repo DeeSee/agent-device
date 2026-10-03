@@ -409,7 +409,7 @@ function maybeEnrichCommandFailedMessage(
 const STDERR_SKIP_PATTERNS = [
   /^an error was encountered processing the command/i,
   /^underlying error\b/i,
-  /^simulator device failed to complete the requested operation/i,
+  /^simulator device failed to (?:complete the requested operation|install the application)\.?$/i,
 ];
 const STDERR_NOISE_PREFIX = /^(?:(?:adb|xcrun|simctl):\s*)?(?:error:\s*)?/i;
 

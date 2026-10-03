@@ -30,6 +30,8 @@ import {
   absenceUnreadableError,
 } from '@agent-device/selectors/absence-observation-errors';
 import { resolveAbsenceObservation } from '@agent-device/selectors/absence-observation-resolution';
+import { isSparseSnapshotQualityVerdict } from '@agent-device/capture-kit/snapshot-quality-verdict';
+import { sparseSelectorSnapshotError } from './selector-read-utils.ts';
 
 export type IsCommandOptions = CommandContext &
   SelectorSnapshotOptions & {
@@ -116,6 +118,9 @@ async function resolveExistsPredicate(
     { platform: runtime.backend.platform },
   );
   if (matched.kind !== 'target') {
+    if (isSparseSnapshotQualityVerdict(capture.snapshot.snapshotQuality)) {
+      throw sparseSelectorSnapshotError(capture.snapshot.snapshotQuality, 'is');
+    }
     throw new AppError(
       'COMMAND_FAILED',
       formatSelectorFailure(selectorExpression, [], { unique: false }),
@@ -150,7 +155,28 @@ async function resolveAssertedPredicate(
         assertExpectedResolvedTarget(node, nodes, options.expectedResolvedTarget, 'is'),
     },
   );
+  if (outcome.kind === 'ambiguous') {
+    const diagnostics = [{ selector: outcome.selector, matches: outcome.matchedNodes.length }];
+    throw new AppError(
+      'AMBIGUOUS_MATCH',
+      formatSelectorFailure(selectorExpression, diagnostics, { unique: true }),
+      {
+        command: 'is',
+        reason: INTERACTION_ERROR_REASONS.selectorAmbiguous,
+        predicate,
+        selector: outcome.selector,
+        matches: outcome.matchedNodes.length,
+        hint: selectorFailureHint(diagnostics),
+      },
+    );
+  }
   if (outcome.kind !== 'target') {
+    if (
+      outcome.kind === 'none' &&
+      isSparseSnapshotQualityVerdict(capture.snapshot.snapshotQuality)
+    ) {
+      throw sparseSelectorSnapshotError(capture.snapshot.snapshotQuality, 'is');
+    }
     throw new AppError(
       'COMMAND_FAILED',
       formatSelectorFailure(selectorExpression, [], { unique: true }),

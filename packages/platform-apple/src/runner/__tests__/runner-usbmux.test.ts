@@ -161,6 +161,31 @@ test('selects the requested device by UDID regardless of its position in the lis
   }
 });
 
+test('prefers the wired record when usbmuxd lists network and USB records for one UDID', async () => {
+  const socketPath = await createSocketPath(socketDirectories);
+  const server = await serveUsbmuxDevices(socketPath, [
+    { deviceId: 145, udid: DEVICE_UDID, connectionType: 'Network' },
+    { deviceId: 144, udid: DEVICE_UDID, connectionType: 'USB' },
+  ]);
+
+  await postThroughFakeUsbmux(socketPath, DEVICE_UDID);
+
+  assert.equal(server.connectedDeviceId(), 144);
+});
+
+test('does not claim a network-only usbmuxd record as a wired attachment', async () => {
+  const socketPath = await createSocketPath(socketDirectories);
+  const server = await serveUsbmuxDevices(socketPath, [
+    { deviceId: 145, udid: DEVICE_UDID, connectionType: 'Network' },
+  ]);
+
+  const error = await postThroughFakeUsbmux(socketPath, DEVICE_UDID);
+
+  assert.equal((error as AppError).code, 'DEVICE_NOT_FOUND');
+  assert.equal((error as AppError).details?.usbmuxDeviceAttached, false);
+  assert.equal(server.connectedDeviceId(), undefined);
+});
+
 test('never matches a different device whose UDID merely shares a prefix', async () => {
   const socketPath = await createSocketPath(socketDirectories);
   const server = await serveUsbmuxDevices(socketPath, [

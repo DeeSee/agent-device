@@ -463,3 +463,57 @@ test('runtime is still refuses a predicate that is not in the vocabulary', async
     },
   );
 });
+
+test('runtime is preserves sparse positives but refuses an absent answer', async () => {
+  const snapshot = makeSnapshotState([
+    {
+      index: 0,
+      type: 'Button',
+      label: 'Continue',
+      rect: { x: 10, y: 20, width: 100, height: 40 },
+      hittable: true,
+    },
+  ]);
+  const device = createAgentDevice({
+    backend: {
+      platform: 'ios',
+      captureSnapshot: async () => ({
+        nodes: snapshot.nodes,
+        backend: 'xctest',
+        quality: {
+          state: 'sparse',
+          backend: 'private-ax',
+          reason: 'sparse tree',
+          reasonCode: 'sparse-tree',
+        },
+      }),
+    } satisfies AgentDeviceBackend,
+    artifacts: createLocalArtifactAdapter(),
+    sessions: createMemorySessionStore([{ name: 'default' }]),
+    policy: localCommandPolicy(),
+  });
+
+  assert.equal(
+    (
+      await device.selectors.is({
+        session: 'default',
+        predicate: 'visible',
+        selector: 'label=Continue',
+      })
+    ).pass,
+    true,
+  );
+  await assert.rejects(
+    () =>
+      device.selectors.is({
+        session: 'default',
+        predicate: 'visible',
+        selector: 'label=Missing',
+      }),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.code === 'COMMAND_FAILED' &&
+      error.message === 'is could not read the current accessibility tree' &&
+      error.details?.reason === 'capture_sparse',
+  );
+});

@@ -410,8 +410,10 @@ function resolveDeviceByName(
 ): DeviceInfo | undefined {
   if (!deviceName) return undefined;
   const normalizedName = normalizeDeviceName(deviceName);
-  const match = candidates.find((device) => normalizeDeviceName(device.name) === normalizedName);
-  if (!match) {
+  const matches = candidates.filter(
+    (device) => normalizeDeviceName(device.name) === normalizedName,
+  );
+  if (matches.length === 0) {
     const hint = deviceIdentityMistakenForNameHint(candidates, deviceName);
     throw new AppError(
       'DEVICE_NOT_FOUND',
@@ -419,7 +421,8 @@ function resolveDeviceByName(
       hint === undefined ? undefined : { hint },
     );
   }
-  return match;
+  if (matches.length > 1) throwAmbiguousDeviceSelection(matches);
+  return matches[0];
 }
 
 /**
@@ -507,7 +510,7 @@ function throwAmbiguousDeviceSelection(candidates: DeviceInfo[]): never {
       // and MCP renderers print these candidates without a new shape to learn.
       devices: listed.map((device) => ({ id: device.id, name: device.name })),
       matches: candidates.length,
-      hint: buildAmbiguousDeviceHint(listed),
+      hint: buildAmbiguousDeviceHint(candidates),
     },
   );
 }
@@ -517,9 +520,14 @@ function buildAmbiguousDeviceHint(candidates: DeviceInfo[]): string {
   const identitySelector = first
     ? `--${deviceIdentityFlag(first.platform) ?? 'udid'} ${first.id}`
     : `--udid <id>`;
+  const normalizedFirstName = first ? normalizeDeviceName(first.name) : undefined;
+  const nameDisambiguates =
+    normalizedFirstName !== undefined &&
+    candidates.filter((device) => normalizeDeviceName(device.name) === normalizedFirstName)
+      .length === 1;
+  const nameSelector = nameDisambiguates ? ` or --device ${JSON.stringify(first?.name)}` : '';
   return (
-    `Select the intended device explicitly, for example ${identitySelector} ` +
-    `or --device ${JSON.stringify(first?.name ?? '<name>')}. ` +
+    `Select the intended device explicitly, for example ${identitySelector}${nameSelector}. ` +
     `Run agent-device devices to list them.`
   );
 }

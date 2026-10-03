@@ -229,21 +229,32 @@ function buildPlistMessage(
 }
 
 function readDeviceIdFromList(xml: string, udid: string): number | undefined {
+  const matches: ListedUsbmuxDevice[] = [];
   for (const node of walkXmlNodes(parseXmlDocumentSync(xml))) {
     const device = readListedDevice(node);
-    if (device?.udid === udid) return device.id;
+    if (device?.udid === udid) matches.push(device);
   }
-  return undefined;
+  return (
+    matches.find((device) => device.connectionType === 'USB')?.id ??
+    matches.find((device) => device.connectionType === undefined)?.id
+  );
 }
 
-function readListedDevice(node: XmlNode): { udid: string; id: number } | undefined {
+type ListedUsbmuxDevice = {
+  udid: string;
+  id: number;
+  connectionType?: string;
+};
+
+function readListedDevice(node: XmlNode): ListedUsbmuxDevice | undefined {
   if (node.name !== 'dict') return undefined;
   const properties = readDictEntry(node, 'Properties');
   if (properties?.name !== 'dict') return undefined;
   const udid = readDictEntry(properties, 'SerialNumber')?.text;
   const id = Number(readDictEntry(node, 'DeviceID')?.text);
   if (!udid || !Number.isSafeInteger(id) || id <= 0) return undefined;
-  return { udid, id };
+  const connectionType = readDictEntry(properties, 'ConnectionType')?.text?.toUpperCase();
+  return { udid, id, ...(connectionType ? { connectionType } : {}) };
 }
 
 function readPlistInteger(xml: string, key: string): number | undefined {

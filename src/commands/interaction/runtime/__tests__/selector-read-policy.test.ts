@@ -68,8 +68,8 @@ test('is fails closed on the same ambiguous selector (readUnique row)', async ()
     );
 
   assert.ok(error instanceof AppError, 'is must refuse rather than answer about one duplicate');
-  assert.equal(error.code, 'COMMAND_FAILED');
-  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_not_found');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_ambiguous');
 });
 
 /**

@@ -384,3 +384,31 @@ test('resolveDevice returns physical device when explicitly selected by deviceNa
   });
   assert.equal(result.id, 'phys-1');
 });
+
+test('resolveDevice refuses duplicate normalized names and recommends an identity selector', async () => {
+  const first: DeviceInfo = {
+    platform: 'apple',
+    id: 'sim-1',
+    name: 'Shared_iPhone',
+    kind: 'simulator',
+    booted: true,
+  };
+  const second: DeviceInfo = {
+    platform: 'apple',
+    id: 'sim-2',
+    name: 'shared iphone',
+    kind: 'simulator',
+    booted: true,
+  };
+
+  const error = await resolveDevice([first, second], {
+    platform: 'ios',
+    deviceName: 'SHARED IPHONE',
+  }).catch((caught) => caught);
+
+  assert.ok(error instanceof AppError);
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  assert.equal(error.details?.matches, 2);
+  assert.match(String(error.details?.hint), /--udid sim-1/);
+  assert.doesNotMatch(String(error.details?.hint), /--device/);
+});

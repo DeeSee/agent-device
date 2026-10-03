@@ -578,6 +578,8 @@ const isCommandFacet = defineCommandFacet({
   name: 'is',
   text: {
     summary: 'Check a UI predicate on a selector',
+    cliDetail:
+      'Ambiguous predicates fail with AMBIGUOUS_MATCH. A missing target in a sparse capture fails with capture_sparse; a match that is present can still satisfy the predicate. Use is absent for a strict absence assertion.',
   },
   metadata: metadata('is'),
   run: (client, input) => client.interactions.is(input as IsOptions),

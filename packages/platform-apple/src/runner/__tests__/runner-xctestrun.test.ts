@@ -562,7 +562,19 @@ test('prepareXctestrunWithEnv writes env overlays into configured env dir', asyn
     fs.writeFileSync(
       xctestrunPath,
       JSON.stringify({
-        TestConfigurations: [{ TestTargets: [{ TestBundlePath: 'AgentDeviceRunnerUITests' }] }],
+        TestConfigurations: [
+          {
+            TestTargets: [
+              {
+                TestHostPath: '__TESTROOT__/Debug-iphoneos/RunnerUITests-Runner.app',
+                TestBundlePath: '__TESTHOST__/PlugIns/RunnerUITests.xctest',
+                UITargetAppPath: '__TESTROOT__/Debug-iphoneos/Runner.app',
+                ProductPaths: ['__TESTROOT__/Debug-iphoneos/RunnerUITests-Runner.app'],
+                DependentProductPaths: ['__TESTROOT__/Debug-iphoneos/Runner.app'],
+              },
+            ],
+          },
+        ],
       }),
     );
 
@@ -579,6 +591,21 @@ test('prepareXctestrunWithEnv writes env overlays into configured env dir', asyn
     );
     assert.equal(fs.existsSync(prepared.xctestrunPath), true);
     assert.equal(fs.existsSync(prepared.jsonPath), true);
+    const target = JSON.parse(fs.readFileSync(prepared.jsonPath, 'utf8')).TestConfigurations[0]
+      .TestTargets[0];
+    const artifactRoot = path.dirname(xctestrunPath);
+    assert.equal(
+      target.TestHostPath,
+      path.join(artifactRoot, 'Debug-iphoneos', 'RunnerUITests-Runner.app'),
+    );
+    assert.equal(target.TestBundlePath, '__TESTHOST__/PlugIns/RunnerUITests.xctest');
+    assert.equal(target.UITargetAppPath, path.join(artifactRoot, 'Debug-iphoneos', 'Runner.app'));
+    assert.deepEqual(target.ProductPaths, [
+      path.join(artifactRoot, 'Debug-iphoneos', 'RunnerUITests-Runner.app'),
+    ]);
+    assert.deepEqual(target.DependentProductPaths, [
+      path.join(artifactRoot, 'Debug-iphoneos', 'Runner.app'),
+    ]);
   });
 });
 

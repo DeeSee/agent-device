@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { rebaseXctestrunProductReferences } from './runner-xctestrun-products.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import { requireExecSuccess, runAppleToolCommand } from './host.ts';
 
@@ -127,6 +128,7 @@ export async function prepareXctestrunWithEnv(
     `${RUNNER_SESSION_XCTESTRUN_STEM}.${safeSuffix}.xctestrun`,
   );
   const parsed = await readXctestrunPlist(xctestrunPath);
+  rebaseXctestrunProductReferences(parsed, path.dirname(path.resolve(xctestrunPath)));
 
   visitXctestrunTargets(parsed, (target) => mergeEnvIntoXctestrunTarget(target, envVars));
   // Xcode re-synthesizes these keys from its own defaults, not the test plan: building this

@@ -280,7 +280,7 @@ test('runtime find wait reports sparse snapshot verdicts on the selector-read ro
     (error: unknown) =>
       error instanceof Error &&
       error.message === 'find could not read the current accessibility tree' &&
-      (error as { details?: { reason?: string } }).details?.reason === 'sparse tree',
+      (error as { details?: { reason?: string } }).details?.reason === 'capture_sparse',
   );
   assert.equal(session.snapshot, initialSnapshot);
 });

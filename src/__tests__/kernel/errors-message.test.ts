@@ -55,6 +55,30 @@ test('normalizeError skips simctl boilerplate wrappers in stderr', () => {
   assert.equal(normalized.message, 'Operation not permitted');
 });
 
+test('normalizeError skips the CoreSimulator install wrapper before the actionable cause', () => {
+  const err = new AppError('COMMAND_FAILED', 'xcrun exited with code 13', {
+    exitCode: 13,
+    processExitError: true,
+    stderr: [
+      'An error was encountered processing the command (domain=IXUserPresentableErrorDomain, code=1):',
+      'Simulator device failed to install the application.',
+      'The application is missing its signature.',
+    ].join('\n'),
+  });
+  const normalized = normalizeError(err);
+  assert.equal(normalized.message, 'The application is missing its signature.');
+});
+
+test('normalizeError preserves a CoreSimulator line that contains the actionable cause', () => {
+  const err = new AppError('COMMAND_FAILED', 'xcrun exited with code 1', {
+    exitCode: 1,
+    processExitError: true,
+    stderr: 'Simulator device failed to boot: device unavailable\n',
+  });
+  const normalized = normalizeError(err);
+  assert.equal(normalized.message, 'Simulator device failed to boot: device unavailable');
+});
+
 test('normalizeError strips adb and severity prefixes from the stderr excerpt', () => {
   const err = new AppError('COMMAND_FAILED', 'adb exited with code 1', {
     exitCode: 1,

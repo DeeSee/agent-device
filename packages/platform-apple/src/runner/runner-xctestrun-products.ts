@@ -11,6 +11,28 @@ const XCTESTRUN_PRODUCT_REFERENCE_KEYS = new Set([
   'UITargetAppPath',
 ]);
 
+export function rebaseXctestrunProductReferences(
+  parsed: Record<string, unknown>,
+  testRoot: string,
+): void {
+  for (const target of [
+    parsed,
+    ...collectConfiguredTestTargets(parsed),
+    ...collectLegacyTestTargets(parsed),
+  ]) {
+    for (const [key, value] of Object.entries(target)) {
+      if (!XCTESTRUN_PRODUCT_REFERENCE_KEYS.has(key)) continue;
+      if (typeof value === 'string') {
+        target[key] = rebaseTestRootReference(value, testRoot);
+      } else if (Array.isArray(value)) {
+        target[key] = value.map((item) =>
+          typeof item === 'string' ? rebaseTestRootReference(item, testRoot) : item,
+        );
+      }
+    }
+  }
+}
+
 export async function resolveExistingXctestrunProductPaths(
   xctestrunPath: string,
 ): Promise<string[] | null> {
@@ -200,4 +222,10 @@ function extractAppBundleRoot(relativePath: string): string | null {
     return null;
   }
   return relativePath.slice(0, match.index + '.app'.length);
+}
+
+function rebaseTestRootReference(value: string, testRoot: string): string {
+  if (value === '__TESTROOT__') return testRoot;
+  const prefix = '__TESTROOT__/';
+  return value.startsWith(prefix) ? path.join(testRoot, value.slice(prefix.length)) : value;
 }

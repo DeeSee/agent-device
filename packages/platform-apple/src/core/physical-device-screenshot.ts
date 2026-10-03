@@ -6,6 +6,9 @@ import { runIosDevicectl } from './devicectl.ts';
 import { copyCoreDeviceRunnerFile } from './physical-device-files.ts';
 import type { AppleRunnerCommandExecutor, AppleRunnerCommandOptions } from '../runner/index.ts';
 import { appleToolFailureText, extractAppleToolErrorMeta } from './tool-diagnostics.ts';
+import { resolveAppleToolProvider, type AppleToolProvider } from './tool-provider.ts';
+
+const devicectlScreenshotUnavailable = new WeakSet<AppleToolProvider>();
 
 export type IosPhysicalDeviceScreenshotOptions = {
   appBundleId?: string;
@@ -20,7 +23,8 @@ export async function captureCoreDeviceScreenshot(
   outPath: string,
   options: IosPhysicalDeviceScreenshotOptions,
 ): Promise<void> {
-  if (!options.preferRunner) {
+  const toolProvider = resolveAppleToolProvider();
+  if (!options.preferRunner && !devicectlScreenshotUnavailable.has(toolProvider)) {
     try {
       await runIosDevicectl(
         ['device', 'capture', 'screenshot', '--device', device.id, '--destination', outPath],
@@ -32,6 +36,7 @@ export async function captureCoreDeviceScreenshot(
       return;
     } catch (error) {
       if (!shouldFallbackToRunnerForIosScreenshot(error)) throw error;
+      devicectlScreenshotUnavailable.add(toolProvider);
       emitPhysicalScreenshotFallbackDiagnostic(device, error);
     }
   }

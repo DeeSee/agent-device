@@ -56,3 +56,39 @@ test('shouldFallbackToRunnerForIosScreenshot ignores unrelated command failures'
   });
   assert.equal(shouldFallbackToRunnerForIosScreenshot(error), false);
 });
+
+test('captureCoreDeviceScreenshot caches a recognized unsupported devicectl screenshot route', async () => {
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  let runnerCalls = 0;
+  await withAppleToolProvider(
+    createLocalAppleToolProvider({
+      runCommand: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (args.slice(0, 4).join(' ') === 'devicectl device capture screenshot') {
+          return { exitCode: 64, stdout: '', stderr: "error: Unknown option '--device'" };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    }),
+    async () => {
+      const options = {
+        runRunnerCommand: async () => {
+          runnerCalls += 1;
+          return { message: 'tmp/runner-screenshot.png' };
+        },
+      };
+      await captureCoreDeviceScreenshot(IOS_DEVICE, '/tmp/first.png', options);
+      await captureCoreDeviceScreenshot(IOS_DEVICE, '/tmp/second.png', options);
+    },
+  );
+  assert.equal(
+    calls.filter(({ args }) => args.slice(0, 4).join(' ') === 'devicectl device capture screenshot')
+      .length,
+    1,
+  );
+  assert.equal(runnerCalls, 2);
+  assert.equal(
+    calls.filter(({ args }) => args.slice(0, 4).join(' ') === 'devicectl device copy from').length,
+    2,
+  );
+});
