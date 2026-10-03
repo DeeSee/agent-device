@@ -1,3 +1,4 @@
+import { AppError } from '@agent-device/kernel/errors';
 import {
   emitDiagnostic,
   isProcessAlive,
@@ -13,7 +14,7 @@ import {
   buildRunnerSessionXctestrunDeviceCleanupPattern,
   buildRunnerSessionXctestrunPathCleanupPattern,
 } from './runner-artifact-env.ts';
-import { isMacOs, type DeviceInfo } from '@agent-device/kernel/device';
+import { isMacOs } from '@agent-device/kernel/device';
 import { cleanupTempFile } from './runner-io.ts';
 import { waitForRunner } from './runner-startup-transport.ts';
 import { withRunnerCommandId, type RunnerCommand } from './runner-contract.ts';
@@ -25,7 +26,7 @@ import {
   type RunnerLeaseCleanupAdapter,
   type RunnerXcodebuildCleanupTarget,
 } from './runner-lease.ts';
-import { IOS_RUNNER_CONTAINER_BUNDLE_IDS, runnerPrepProcesses } from './runner-xctestrun.ts';
+import { runnerPrepProcesses } from './runner-xctestrun.ts';
 import { advanceRunnerSessionState, type RunnerSession } from './runner-session-types.ts';
 
 export const RUNNER_INVALIDATE_WAIT_TIMEOUT_MS = 1_000;
@@ -45,6 +46,7 @@ export const runnerLeaseCleanupAdapter: RunnerLeaseCleanupAdapter = {
 
 export type RunnerDisposalOptions = {
   graceful?: boolean;
+  requireConfirmedExit?: boolean;
   waitTimeoutMs?: number;
   /**
    * The caller already executes inside {@link withRunnerLeaseLock} for this
@@ -66,6 +68,8 @@ export async function disposeRunnerSession(
     processExitHandled = await shutdownRunnerSessionGracefully(session);
   } else if (isMacOs(session.device)) {
     await interruptMacOsRunnerSessions([session]);
+    if (options.requireConfirmedExit)
+      await requireRunnerProcessTreeExit(session, options.waitTimeoutMs);
     await cleanupRunnerSessionResources(session, options);
     return;
   } else {
@@ -78,6 +82,8 @@ export async function disposeRunnerSession(
       await killRunnerProcessTree(session.child.pid, 'SIGKILL');
     }
   }
+  if (options.requireConfirmedExit)
+    await requireRunnerProcessTreeExit(session, options.waitTimeoutMs);
   await cleanupRunnerSessionResources(session, options);
 }
 
@@ -204,8 +210,7 @@ async function cleanupRunnerSessionResources(
   options: Pick<RunnerDisposalOptions, 'leaseLockHeld'> = {},
 ): Promise<void> {
   await settleOwnedRunnerDeviceState(session, options);
-  cleanupTempFile(session.xctestrunPath);
-  cleanupTempFile(session.jsonPath);
+  for (const filePath of session.ownedEnvironmentFiles) cleanupTempFile(filePath);
   // The session's own resources are gone: no lease, no temp files.
   advanceRunnerSessionState(session, 'stopped');
 }
@@ -227,7 +232,7 @@ async function settleOwnedRunnerDeviceState(
   const settle = async () => {
     if (runnerLeaseOwnedElsewhere(session)) return;
     try {
-      await terminateRunnerSimulatorApps(session.device);
+      await terminateRunnerSimulatorApps(session);
     } finally {
       releaseRunnerLease(session.lease);
     }
@@ -256,11 +261,12 @@ function runnerLeaseOwnedElsewhere(session: RunnerSession): boolean {
   return onDiskToken !== null && onDiskToken !== session.lease?.ownerToken;
 }
 
-async function terminateRunnerSimulatorApps(device: DeviceInfo): Promise<void> {
+async function terminateRunnerSimulatorApps(session: RunnerSession): Promise<void> {
+  const device = session.device;
   if (device.kind !== 'simulator') return;
 
   await Promise.allSettled(
-    IOS_RUNNER_CONTAINER_BUNDLE_IDS.map(async (bundleId) => {
+    [session.launchIdentity.testHostContainerBundleId].map(async (bundleId) => {
       try {
         await runXcrun(buildSimctlArgsForDevice(device, ['terminate', device.id, bundleId]), {
           allowFailure: true,
@@ -356,4 +362,23 @@ async function killRunnerXcodebuildProcesses(target: RunnerXcodebuildCleanupTarg
       });
     }
   }
+}
+
+async function requireRunnerProcessTreeExit(
+  session: RunnerSession,
+  waitTimeoutMs: number | undefined,
+): Promise<void> {
+  const timeoutMs = waitTimeoutMs ?? RUNNER_STOP_WAIT_TIMEOUT_MS;
+  await waitForRunnerProcessExit(session, timeoutMs);
+  if (!isRunnerProcessTreeAlive(session.child.pid)) return;
+  throw new AppError(
+    'COMMAND_FAILED',
+    'The exact iOS runner process could not be confirmed stopped',
+    {
+      reason: 'runner_disposal_unconfirmed',
+      sessionId: session.sessionId,
+      runnerPid: session.child.pid,
+      timeoutMs,
+    },
+  );
 }

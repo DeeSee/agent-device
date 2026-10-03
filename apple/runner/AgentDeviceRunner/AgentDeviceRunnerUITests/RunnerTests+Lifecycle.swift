@@ -157,9 +157,9 @@ extension RunnerTests {
   }
 
   func stopRecordingIfNeeded() {
-    guard let recorder = activeRecording else { return }
+    guard let recording = activeRecording else { return }
     do {
-      try recorder.stop()
+      try recording.recorder.stop()
     } catch {
       NSLog("AGENT_DEVICE_RUNNER_RECORD_STOP_FAILED=%@", String(describing: error))
     }

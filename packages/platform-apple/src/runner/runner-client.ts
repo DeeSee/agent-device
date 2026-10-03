@@ -1,3 +1,11 @@
+import { AppError } from '@agent-device/kernel/errors';
+import {
+  executeRunnerCommandWithReceipt,
+  executeRunnerCommand,
+  prepareLocalIosRunner,
+  type PrepareIosRunnerOptions,
+  type PrepareIosRunnerResult,
+} from './runner-lifecycle.ts';
 import { retryWithPolicy, emitDiagnostic } from './host.ts';
 import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import {
@@ -17,6 +25,7 @@ import {
 import { isRetryableRunnerError, isRunnerBusyError } from './runner-error-classification.ts';
 import { isReadOnlyRunnerCommand } from './runner-command-traits.ts';
 import {
+  type AppleRunnerCommandExecution,
   createLocalAppleRunnerProvider,
   resolveAppleRunnerProvider,
   type AppleRunnerCommandOptions,
@@ -24,12 +33,6 @@ import {
   type AppleRunnerProvider,
 } from './runner-provider.ts';
 import { createRunnerPhaseBudget, ensureXctestrunArtifact } from './runner-xctestrun.ts';
-import {
-  executeRunnerCommand,
-  prepareLocalIosRunner,
-  type PrepareIosRunnerOptions,
-  type PrepareIosRunnerResult,
-} from './runner-lifecycle.ts';
 import { RUNNER_COMMAND_TIMEOUT_MS } from './runner-transport.ts';
 
 // --- Runner command execution ---
@@ -76,6 +79,53 @@ export async function runAppleRunnerCommand(
       () => {
         assertRunnerRequestActive(options.requestId);
         return provider.runCommand(device, runnerCommand, options);
+      },
+      {
+        ...READ_ONLY_RESEND_POLICY,
+        shouldRetry: (error, attempt) => {
+          assertRunnerRequestActive(options.requestId);
+          if (isRunnerBusyError(error)) lastBusyRefusal = error;
+          return attempt < readOnlyResendBudget(error);
+        },
+      },
+      // The busy window is seconds long, so an abort must wake the delay instead of sleeping it
+      // out and sending one more attempt.
+      { signal: resolveRunnerRequestSignal(options) },
+    );
+  } catch (error) {
+    // A caller's deadline (a `wait` poll bounding this capture) that lands mid-window still has an
+    // answer: the runner refused, and that typed refusal is what the caller can act on. Only a
+    // cancelled request reports as a bare cancellation.
+    if (lastBusyRefusal && callerDeadlineExpired(options)) throw lastBusyRefusal;
+    throw error;
+  }
+}
+
+export async function runAppleRunnerCommandWithReceipt(
+  device: DeviceInfo,
+  command: RunnerCommand,
+  options: AppleRunnerCommandOptions = {},
+): Promise<AppleRunnerCommandExecution> {
+  validateRunnerDevice(device);
+  assertRunnerRequestActive(options.requestId);
+  const runnerCommand = withRunnerCommandId(command);
+  const provider = resolveAppleRunnerRuntime(device, options);
+  if (!provider.runCommandWithReceipt)
+    throw new AppError(
+      'UNSUPPORTED_OPERATION',
+      'Apple runner provider does not expose session-bound command receipts',
+      { reason: 'runner_receipt_unavailable' },
+    );
+  const execute = provider.runCommandWithReceipt;
+  if (!isReadOnlyRunnerCommand(runnerCommand)) {
+    return execute(device, runnerCommand, options);
+  }
+  let lastBusyRefusal: unknown;
+  try {
+    return await retryWithPolicy(
+      () => {
+        assertRunnerRequestActive(options.requestId);
+        return execute(device, runnerCommand, options);
       },
       {
         ...READ_ONLY_RESEND_POLICY,
@@ -206,9 +256,18 @@ export async function prepareIosRunner(
   }
 
   const healthStartedAt = Date.now();
-  const runner = await provider.runCommand(device, command, options);
+  const execute = provider.runCommandWithReceipt;
+  if (!execute)
+    throw new AppError(
+      'UNSUPPORTED_OPERATION',
+      'Apple runner prepare requires a session-bound command receipt',
+      { reason: 'runner_receipt_unavailable' },
+    );
+  const execution = await execute(device, command, options);
   return {
-    runner,
+    runner: execution.data,
+    runnerSessionId: execution.receipt.runnerSessionId,
+    launchIdentity: execution.receipt.launchIdentity,
     connectMs: 0,
     healthCheckMs: Math.max(0, Date.now() - healthStartedAt),
   };
@@ -248,20 +307,25 @@ export async function releaseSpeculativeIosRunnerSessionFor(
   return release ? await release(device) : false;
 }
 
-const LOCAL_APPLE_RUNNER_RUNTIME = createLocalAppleRunnerProvider(executeRunnerCommand, {
-  prepare: prepareLocalIosRunner,
-  hasLiveSession: (device) => readRunnerSessionLiveness(device.id)?.liveness === 'ready',
-  releaseSpeculativeSession: async (device) => await releaseSpeculativeIosRunnerSession(device.id),
-  prewarm: async (device, options) => {
-    const { healthCheck, ...runnerOptions } = options;
-    if (healthCheck === false) {
-      await ensureRunnerSession(device, { ...runnerOptions, speculative: true });
-      return;
-    }
-    await prepareLocalIosRunner(device, {
-      ...runnerOptions,
-      speculative: true,
-      healthTimeoutMs: RUNNER_COMMAND_TIMEOUT_MS,
-    });
+const LOCAL_APPLE_RUNNER_RUNTIME = createLocalAppleRunnerProvider(
+  executeRunnerCommand,
+  {
+    prepare: prepareLocalIosRunner,
+    hasLiveSession: (device) => readRunnerSessionLiveness(device.id)?.liveness === 'ready',
+    releaseSpeculativeSession: async (device) =>
+      await releaseSpeculativeIosRunnerSession(device.id),
+    prewarm: async (device, options) => {
+      const { healthCheck, ...runnerOptions } = options;
+      if (healthCheck === false) {
+        await ensureRunnerSession(device, { ...runnerOptions, speculative: true });
+        return;
+      }
+      await prepareLocalIosRunner(device, {
+        ...runnerOptions,
+        speculative: true,
+        healthTimeoutMs: RUNNER_COMMAND_TIMEOUT_MS,
+      });
+    },
   },
-});
+  executeRunnerCommandWithReceipt,
+);

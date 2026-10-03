@@ -1,4 +1,4 @@
-import { createRequestCanceledError, AppError } from '@agent-device/kernel/errors';
+import { createRequestCanceledError, AppError, asAppError } from '@agent-device/kernel/errors';
 import { Deadline, resolveIosPhysicalDeviceControl } from './host.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { createRunnerCommandRouteResolver } from './runner-command-route.ts';
@@ -41,16 +41,20 @@ export async function sendRunnerCommandOnce(
       endpoints: route.endpoints,
     });
   }
-  return await fetchWithTimeout(
-    endpoint,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(command),
-    },
-    remainingMs,
-    signal,
-  );
+  try {
+    return await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(command),
+      },
+      remainingMs,
+      signal,
+    );
+  } catch (error) {
+    throw markRunnerCommandDispatchAttempted(error);
+  }
 }
 
 async function postUsbmuxRunnerCommand(
@@ -67,7 +71,42 @@ async function postUsbmuxRunnerCommand(
       timeoutMs: remainingMs,
     });
   }
-  return await usbmuxRunnerTransport.postCommand(device.id, port, command, remainingMs, signal);
+  try {
+    return await usbmuxRunnerTransport.postCommand(device.id, port, command, remainingMs, signal);
+  } catch (error) {
+    throw markRunnerCommandDispatchAttempted(error);
+  }
+}
+
+export function markRunnerCommandDispatchAttempted(error: unknown): AppError {
+  const appError = asAppError(error, 'COMMAND_FAILED');
+  return new AppError(
+    appError.code,
+    appError.message,
+    { ...(appError.details ?? {}), runnerCommandDispatch: 'attempted' },
+    appError,
+  );
+}
+
+export function runnerCommandDispatchWasAttempted(error: unknown): boolean {
+  return runnerCommandHasDetail(error, 'runnerCommandDispatch', 'attempted');
+}
+
+export function runnerCommandWasRejected(error: unknown): boolean {
+  return runnerCommandHasDetail(error, 'runnerCommandOutcome', 'rejected');
+}
+
+function runnerCommandHasDetail(error: unknown, key: string, value: string): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof AppError && current.details?.[key] === value) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
 }
 
 /**

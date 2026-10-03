@@ -671,3 +671,55 @@ async function withIsolatedInstallTempRoot(
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 }
+
+test('prepareIosInstallArtifact loans a private app through an installer-readable copy', async () => {
+  const sourceRoot = await mkdtempForTest('agent-device-private-ios-app-');
+  const sourceApp = path.join(sourceRoot, 'Demo.app');
+  const sourceExecutable = path.join(sourceApp, 'Demo');
+  const sourceInfo = path.join(sourceApp, 'Info.plist');
+  await fs.mkdir(sourceApp, { mode: 0o700 });
+  await fs.writeFile(sourceExecutable, 'executable');
+  await fs.chmod(sourceExecutable, 0o500);
+  await fs.writeFile(sourceInfo, 'plist');
+  await fs.chmod(sourceInfo, 0o400);
+  await fs.chmod(sourceApp, 0o500);
+  await fs.chmod(sourceRoot, 0o700);
+  let stagedRoot = '';
+  try {
+    await withIosBundleInfo('com.example.private', 'Private App', async () => {
+      const result = await prepareIosInstallArtifact({ kind: 'path', path: sourceApp });
+      stagedRoot = path.dirname(result.installablePath);
+      try {
+        assert.notEqual(result.installablePath, sourceApp);
+        assert.equal(path.basename(result.installablePath), 'Demo.app');
+        assert.equal((await fs.stat(stagedRoot)).mode & 0o777, 0o755);
+        assert.equal((await fs.stat(result.installablePath)).mode & 0o777, 0o755);
+        assert.equal(
+          (await fs.stat(path.join(result.installablePath, 'Demo'))).mode & 0o777,
+          0o755,
+        );
+        assert.equal(
+          (await fs.stat(path.join(result.installablePath, 'Info.plist'))).mode & 0o777,
+          0o644,
+        );
+        assert.equal(
+          await fs.readFile(path.join(result.installablePath, 'Demo'), 'utf8'),
+          'executable',
+        );
+        assert.notEqual(
+          (await fs.stat(path.join(result.installablePath, 'Demo'))).ino,
+          (await fs.stat(sourceExecutable)).ino,
+        );
+      } finally {
+        await result.cleanup();
+      }
+    });
+    await assert.rejects(async () => await fs.stat(stagedRoot));
+    assert.equal((await fs.stat(sourceRoot)).mode & 0o777, 0o700);
+    assert.equal((await fs.stat(sourceExecutable)).mode & 0o777, 0o500);
+  } finally {
+    await fs.chmod(sourceRoot, 0o700);
+    await fs.chmod(sourceApp, 0o700).catch(() => {});
+    await fs.rm(sourceRoot, { recursive: true, force: true });
+  }
+});

@@ -132,6 +132,15 @@ const DEVICE_INFO_DETAILS_COMMAND =
 
 export const RUNNER_STARTUP_FAILURE_FIXTURES: readonly RunnerStartupFailureFixture[] = [
   {
+    id: 'missing-test-product',
+    reason: 'runner_artifact_product_missing',
+    site: 'build-for-testing',
+    xcodeVersion: UNOBSERVED,
+    provenance: 'invented-shape',
+    output: 'AgentDeviceRunner: Missing test product at /private/tmp/RunnerTests.xctest',
+    note: 'Exercises the missing-product trigger preserved from the local fixes; a real capture is still needed.',
+  },
+  {
     id: 'bundle-id-registration-failed',
     reason: 'bundle_identifier_already_registered',
     site: 'build-for-testing',

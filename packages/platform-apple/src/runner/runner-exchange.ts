@@ -1,3 +1,4 @@
+import { markRunnerCommandDispatchAttempted, sendRunnerCommandOnce } from './runner-transport.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { Deadline, emitDiagnostic, withDiagnosticTimer } from './host.ts';
@@ -6,7 +7,6 @@ import {
   RUNNER_STARTUP_TIMEOUT_MS,
   type RunnerConnectionSession,
 } from './runner-startup-transport.ts';
-import { sendRunnerCommandOnce } from './runner-transport.ts';
 import {
   buildRunnerResponseError,
   decodeRunnerResponseBody,
@@ -126,7 +126,8 @@ export async function executeRunnerExchange(
     await settleRunnerAnsweredExchange(session, runnerCommand, data, invalidateFatalSession);
     return data;
   } catch (error) {
-    const answered = recordUnansweredRunnerExchange(session, runnerCommand, error);
+    const attemptedError = markRunnerCommandDispatchAttempted(error);
+    const answered = recordUnansweredRunnerExchange(session, runnerCommand, attemptedError);
     const runnerFatalReason = resolveRunnerFatalErrorReason(error);
     if (runnerFatalReason) {
       session.lastHealthyMutation = undefined;
@@ -137,8 +138,8 @@ export async function executeRunnerExchange(
     // runner died mid-response); structured runner failures carry a `runner`
     // detail and keep their recency — the runner proved it is alive by
     // answering at all.
-    if (answered) throw error;
-    throw markSkippedPreflightTransportError(error, session, preflightDecision);
+    if (answered) throw attemptedError;
+    throw markSkippedPreflightTransportError(attemptedError, session, preflightDecision);
   }
 }
 
@@ -410,9 +411,6 @@ function resolveRunnerReadinessPreflightDecision(
   command: RunnerCommand,
 ): RunnerReadinessPreflightDecision {
   const readOnlyCommand = isReadOnlyRunnerCommand(command);
-  if (isRunnerReadinessPreflightExempt(command)) {
-    return { action: 'skip', reason: 'preflight_exempt_command' };
-  }
   if (session.state !== 'ready') {
     if (readOnlyCommand) {
       return {
@@ -424,6 +422,9 @@ function resolveRunnerReadinessPreflightDecision(
       action: 'run',
       reason: 'startup',
     };
+  }
+  if (isRunnerReadinessPreflightExempt(command)) {
+    return { action: 'skip', reason: 'preflight_exempt_command' };
   }
   if (isRunnerReadinessProbeCommand(command)) {
     return {

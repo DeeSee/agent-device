@@ -47,7 +47,9 @@ async function exportProcessedVideo(params: {
 }): Promise<void> {
   const { videoPath, scriptPath, scriptArgs, commandDescription } = params;
   await waitForStableFile(videoPath);
-  await waitForPlayableVideo(videoPath);
+  if ((await waitForPlayableVideo(videoPath)).status === 'invalid') {
+    throw new Error('recording source is not a playable video');
+  }
 
   const outputPath = temporarySiblingVideoPath(videoPath);
   try {
@@ -59,7 +61,10 @@ async function exportProcessedVideo(params: {
       timeoutMs: 120_000,
       env: buildSwiftToolEnv(),
     });
-    await waitForPlayableVideo(outputPath);
+    const inspection = await waitForPlayableVideo(outputPath);
+    if (inspection.status !== 'measured') {
+      throw new Error('recording post-processing did not produce a verified playable video');
+    }
     fs.renameSync(outputPath, videoPath);
   } catch (error) {
     const cause =

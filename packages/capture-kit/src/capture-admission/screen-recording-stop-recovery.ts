@@ -1,3 +1,7 @@
+import {
+  readScreenRecordingCadence,
+  readRecordingSupplementalStatus,
+} from '../recording/stop-checkpoints.ts';
 import fs from 'node:fs';
 import type { JsonObject } from '@agent-device/contracts/client';
 import { isRecordingScope, type RecordingAppIdentity } from '@agent-device/contracts/recording';
@@ -18,8 +22,8 @@ import type {
 } from '../durable-capture/index.ts';
 import {
   SCREEN_RECORDING_COMPLETION_METADATA_KEY,
-  screenRecordingDurableResource,
-} from './screen-recording-session-resource.ts';
+  screenRecordingResourceStore,
+} from './screen-recording-resource-store.ts';
 import type { DurableCaptureSessionState } from './session-state-slice.ts';
 
 /**
@@ -78,11 +82,10 @@ function readSessionManifest(params: ScreenRecordingManifestParams): Readonly<{
   resourcePath: string;
   record: DurableCaptureResourceRecord<'screen-recording'>;
 }> {
-  const resourcePath = screenRecordingDurableResource.resourcePath(
-    params.sessionStore,
-    params.sessionName,
+  const resourcePath = screenRecordingResourceStore.resolvePath(
+    params.sessionStore.resolveSessionDir(params.sessionName),
   );
-  return { resourcePath, record: screenRecordingDurableResource.store.read(resourcePath) };
+  return { resourcePath, record: screenRecordingResourceStore.read(resourcePath) };
 }
 
 function assertManifestBelongsToRequest(
@@ -145,7 +148,10 @@ function isWholeOptionalResponse(stored: Record<string, unknown>): boolean {
   return (
     OPTIONAL_RESPONSE_FIELDS.every((field) => isOptionalText(stored[field])) &&
     isOptionalAppIdentity(stored.activeSessionApp) &&
-    isOptionalChunks(stored.chunks)
+    isOptionalChunks(stored.chunks) &&
+    (stored.cadence === undefined || readScreenRecordingCadence(stored.cadence) !== undefined) &&
+    (stored.supplemental === undefined ||
+      readRecordingSupplementalStatus(stored.supplemental) !== undefined)
   );
 }
 

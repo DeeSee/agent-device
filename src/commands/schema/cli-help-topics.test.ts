@@ -307,7 +307,8 @@ test('usageForCommand resolves scripting help topic', async () => {
   assert.match(help, /Step keys are command, input, and optional runtime -- that is the whole/);
   assert.match(help, /test \.\/e2e\/maestro --maestro --device udid1,emulator-5554 --shard-all 2/);
   assert.match(help, /Android adb screenrecord has a 180s limit/);
-  assert.match(help, /--hide-touches skips that for the fastest raw recording/);
+  assert.match(help, /explicit --hide-touches publishes the raw take without trim or overlay/);
+  assert.match(help, /reports cadence measured from encoded samples/);
   assert.match(help, /trace start \.\/trace\.log, trace stop \.\/trace\.log/);
 });
 

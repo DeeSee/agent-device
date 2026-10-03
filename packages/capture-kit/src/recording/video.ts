@@ -1,3 +1,5 @@
+import type { VideoInspection } from './video-inspection.ts';
+export type { VideoInspection } from './video-inspection.ts';
 import fs from 'node:fs';
 import { AppError } from '@agent-device/kernel/errors';
 import { runCmd } from '@agent-device/host-kit/command';
@@ -12,6 +14,81 @@ const VIDEO_VALIDATION_SCRIPT = `
 import Foundation
 import AVFoundation
 
+struct VideoInspection: Encodable {
+  let status: String
+  let source: String
+  let reason: String?
+  let sampleCount: Int?
+  let mediaDurationMs: Double?
+  let firstPtsMs: Double?
+  let lastPtsMs: Double?
+  let maxInterSampleGapMs: Double?
+  let effectiveFps: Double?
+}
+
+func emit(_ inspection: VideoInspection) throws {
+  let data = try JSONEncoder().encode(inspection)
+  FileHandle.standardOutput.write(data)
+  FileHandle.standardOutput.write(Data("\\n".utf8))
+}
+
+func invalid(_ reason: String) -> VideoInspection {
+  VideoInspection(
+    status: "invalid",
+    source: "media-pts",
+    reason: reason,
+    sampleCount: nil,
+    mediaDurationMs: nil,
+    firstPtsMs: nil,
+    lastPtsMs: nil,
+    maxInterSampleGapMs: nil,
+    effectiveFps: nil
+  )
+}
+
+func samplePresentationTimes(_ buffer: CMSampleBuffer) -> [CMTime]? {
+  let sampleCount = CMSampleBufferGetNumSamples(buffer)
+  if sampleCount == 0 { return [] }
+  if sampleCount == 1 { return [CMSampleBufferGetPresentationTimeStamp(buffer)] }
+  var timings = Array(
+    repeating: CMSampleTimingInfo(
+      duration: .invalid,
+      presentationTimeStamp: .invalid,
+      decodeTimeStamp: .invalid
+    ),
+    count: sampleCount
+  )
+  var entriesNeeded = 0
+  let status = CMSampleBufferGetSampleTimingInfoArray(
+    buffer,
+    entryCount: sampleCount,
+    arrayToFill: &timings,
+    entriesNeededOut: &entriesNeeded
+  )
+  guard status == noErr else { return nil }
+  if entriesNeeded == sampleCount {
+    return timings.map(\\.presentationTimeStamp)
+  }
+  guard entriesNeeded == 1, let timing = timings.first else { return nil }
+  if sampleCount == 1 { return [timing.presentationTimeStamp] }
+  let durationSeconds = CMTimeGetSeconds(timing.duration)
+  guard
+    timing.duration.isValid,
+    !timing.duration.isIndefinite,
+    durationSeconds.isFinite,
+    durationSeconds > 0
+  else {
+    return nil
+  }
+  var presentationTimes: [CMTime] = []
+  var presentationTime = timing.presentationTimeStamp
+  for _ in 0..<sampleCount {
+    presentationTimes.append(presentationTime)
+    presentationTime = CMTimeAdd(presentationTime, timing.duration)
+  }
+  return presentationTimes
+}
+
 let url = URL(fileURLWithPath: CommandLine.arguments[1])
 let asset = AVURLAsset(url: url)
 let semaphore = DispatchSemaphore(value: 0)
@@ -22,11 +99,101 @@ Task {
   do {
     let playable = try await asset.load(.isPlayable)
     let duration = try await asset.load(.duration)
-    if playable && duration.isValid && !duration.isIndefinite {
+    guard playable, duration.isValid, !duration.isIndefinite else {
+      try emit(invalid("unplayable-or-duration-invalid"))
       exitCode = 0
+      return
     }
+    let tracks = try await asset.loadTracks(withMediaType: .video)
+    guard let track = tracks.first else {
+      try emit(invalid("missing-video-track"))
+      exitCode = 0
+      return
+    }
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+    guard reader.canAdd(output) else {
+      try emit(invalid("probe-failed"))
+      exitCode = 0
+      return
+    }
+    reader.add(output)
+    guard reader.startReading() else {
+      try emit(invalid("probe-failed"))
+      exitCode = 0
+      return
+    }
+
+    var samplePtsMs: [Double] = []
+    while let buffer = output.copyNextSampleBuffer() {
+      guard let presentationTimes = samplePresentationTimes(buffer) else {
+        try emit(invalid("sample-timing-invalid"))
+        exitCode = 0
+        return
+      }
+      for pts in presentationTimes {
+        let ptsMs = CMTimeGetSeconds(pts) * 1000.0
+        guard pts.isValid, !pts.isIndefinite, ptsMs.isFinite else {
+          try emit(invalid("sample-timing-invalid"))
+          exitCode = 0
+          return
+        }
+        samplePtsMs.append(ptsMs)
+      }
+    }
+    guard reader.status == .completed else {
+      try emit(invalid("reader-failed"))
+      exitCode = 0
+      return
+    }
+
+    let orderedPtsMs = samplePtsMs.sorted()
+    let sampleCount = orderedPtsMs.count
+    guard sampleCount > 0 else {
+      try emit(invalid("missing-video-samples"))
+      exitCode = 0
+      return
+    }
+    let firstPtsMs = orderedPtsMs.first
+    let lastPtsMs = orderedPtsMs.last
+    var maxInterSampleGapMs: Double?
+    if orderedPtsMs.count >= 2 {
+      for index in 1..<orderedPtsMs.count {
+        let gapMs = orderedPtsMs[index] - orderedPtsMs[index - 1]
+        guard gapMs > 0 else {
+          try emit(invalid("sample-timing-invalid"))
+          exitCode = 0
+          return
+        }
+        maxInterSampleGapMs = max(maxInterSampleGapMs ?? 0, gapMs)
+      }
+    }
+
+    let effectiveFps: Double?
+    if sampleCount >= 2, let firstPtsMs, let lastPtsMs, lastPtsMs > firstPtsMs {
+      effectiveFps = Double(sampleCount - 1) * 1000.0 / (lastPtsMs - firstPtsMs)
+    } else {
+      effectiveFps = nil
+    }
+    try emit(VideoInspection(
+      status: "measured",
+      source: "media-pts",
+      reason: nil,
+      sampleCount: sampleCount,
+      mediaDurationMs: max(0, CMTimeGetSeconds(duration) * 1000.0),
+      firstPtsMs: firstPtsMs,
+      lastPtsMs: lastPtsMs,
+      maxInterSampleGapMs: maxInterSampleGapMs,
+      effectiveFps: effectiveFps
+    ))
+    exitCode = 0
   } catch {
-    exitCode = 1
+    do {
+      try emit(invalid("probe-failed"))
+      exitCode = 0
+    } catch {
+      exitCode = 1
+    }
   }
 }
 
@@ -34,11 +201,9 @@ semaphore.wait()
 exit(exitCode)
 `.trim();
 
-let videoValidatorExecutablePathPromise: Promise<string> | undefined;
-
 export async function waitForStableFile(
   filePath: string,
-  options: { pollMs?: number; attempts?: number } = {},
+  options: { pollMs?: number; attempts?: number; signal?: AbortSignal } = {},
 ): Promise<void> {
   const pollMs = options.pollMs ?? 150;
   const attempts = options.attempts ?? 12;
@@ -46,6 +211,7 @@ export async function waitForStableFile(
   let stableCount = 0;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    options.signal?.throwIfAborted();
     let currentSize = 0;
     try {
       currentSize = fs.statSync(filePath).size;
@@ -63,47 +229,60 @@ export async function waitForStableFile(
     }
 
     previousSize = currentSize;
-    await sleep(pollMs);
+    if (attempt + 1 < attempts) await sleep(pollMs, options.signal);
   }
+  throw new Error('recording file did not become stable');
 }
 
 export async function isPlayableVideo(filePath: string): Promise<boolean> {
+  return (await inspectVideo(filePath)).status !== 'invalid';
+}
+
+export async function inspectVideo(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<VideoInspection> {
+  const { parseVideoInspectionOutput, invalidInspection, unavailableInspection } =
+    await import('./video-inspection.ts');
+  signal?.throwIfAborted();
   const container = await readVideoContainerKind(filePath);
-  if (!container) return false;
+  signal?.throwIfAborted();
+  if (!container) return invalidInspection('container-invalid');
   // AVFoundation is the MP4 semantic validator. It does not reliably load WebM on supported
   // macOS hosts, so WebM completion is established by its EBML document type + Segment marker.
-  if (container === 'webm') return true;
+  if (container === 'webm') return unavailableInspection('unsupported-container');
   try {
-    const validatorPath = await getVideoValidatorExecutablePath();
+    const validatorPath = await getVideoValidatorExecutablePath(signal);
+    signal?.throwIfAborted();
     const result = await runCmd(validatorPath, [filePath], {
       allowFailure: true,
       timeoutMs: 10_000,
       env: buildSwiftToolEnv(),
+      signal,
     });
+    signal?.throwIfAborted();
     if (result.exitCode === 0) {
-      return true;
+      return parseVideoInspectionOutput(result.stdout) ?? invalidInspection('probe-failed');
     }
-    return isSwiftVideoValidatorUnavailable(result.stderr, result.stdout);
+    return isSwiftVideoValidatorUnavailable(result.stderr, result.stdout)
+      ? unavailableInspection('validator-unavailable')
+      : invalidInspection('probe-failed');
   } catch (error) {
+    signal?.throwIfAborted();
     if (isSwiftVideoValidatorError(error)) {
-      return true;
+      return unavailableInspection('validator-unavailable');
     }
-    throw error;
+    return invalidInspection('probe-failed');
   }
 }
 
-async function getVideoValidatorExecutablePath(): Promise<string> {
-  videoValidatorExecutablePathPromise ??= compileSwiftSourceText({
+async function getVideoValidatorExecutablePath(signal?: AbortSignal): Promise<string> {
+  return await compileSwiftSourceText({
     source: VIDEO_VALIDATION_SCRIPT,
     cacheName: 'video-validator',
     timeoutMs: 30_000,
+    signal,
   });
-  try {
-    return await videoValidatorExecutablePathPromise;
-  } catch (error) {
-    videoValidatorExecutablePathPromise = undefined;
-    throw error;
-  }
 }
 
 function isSwiftVideoValidatorError(error: unknown): boolean {
@@ -121,17 +300,22 @@ function isSwiftVideoValidatorError(error: unknown): boolean {
 
 export async function waitForPlayableVideo(
   filePath: string,
-  options: { pollMs?: number; attempts?: number } = {},
-): Promise<void> {
+  options: { pollMs?: number; attempts?: number; signal?: AbortSignal } = {},
+): Promise<VideoInspection> {
+  const { invalidInspection } = await import('./video-inspection.ts');
   const pollMs = options.pollMs ?? 150;
   const attempts = options.attempts ?? 12;
+  let inspection: VideoInspection = invalidInspection('container-invalid');
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await isPlayableVideo(filePath)) {
-      return;
+    options.signal?.throwIfAborted();
+    inspection = await inspectVideo(filePath, options.signal);
+    if (inspection.status !== 'invalid') {
+      return inspection;
     }
-    await sleep(pollMs);
+    if (attempt + 1 < attempts) await sleep(pollMs, options.signal);
   }
+  return inspection;
 }
 
 function isSwiftVideoValidatorUnavailable(stderr: string, stdout: string): boolean {

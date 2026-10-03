@@ -11,8 +11,11 @@ export function hostTemporaryDirectory(): string {
   return os.tmpdir();
 }
 
-export async function makeHostTemporaryDirectory(prefix: string): Promise<string> {
-  return await fsPromises.mkdtemp(path.join(hostTemporaryDirectory(), prefix));
+export async function makeHostTemporaryDirectory(
+  prefix: string,
+  parentDirectory = hostTemporaryDirectory(),
+): Promise<string> {
+  return await fsPromises.mkdtemp(path.join(parentDirectory, prefix));
 }
 
 export async function ensureHostDirectory(directoryPath: string): Promise<void> {
@@ -79,8 +82,24 @@ export async function copyHostFile(sourcePath: string, destinationPath: string):
   await fsPromises.copyFile(sourcePath, destinationPath);
 }
 
-export async function copyHostPath(sourcePath: string, destinationPath: string): Promise<void> {
-  await fsPromises.cp(sourcePath, destinationPath, { recursive: true });
+export async function copyHostPath(
+  sourcePath: string,
+  destinationPath: string,
+  options: {
+    overwrite?: boolean;
+    preserveTimestamps?: boolean;
+    verbatimSymlinks?: boolean;
+    clone?: boolean;
+  } = {},
+): Promise<void> {
+  await fsPromises.cp(sourcePath, destinationPath, {
+    recursive: true,
+    force: options.overwrite,
+    errorOnExist: options.overwrite === false,
+    preserveTimestamps: options.preserveTimestamps,
+    verbatimSymlinks: options.verbatimSymlinks,
+    mode: options.clone ? fs.constants.COPYFILE_FICLONE : undefined,
+  });
 }
 
 export async function renameHostPath(sourcePath: string, destinationPath: string): Promise<void> {

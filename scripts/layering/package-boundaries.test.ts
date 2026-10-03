@@ -541,8 +541,10 @@ test('the real tree parses, declares, and passes R11', () => {
     '@agent-device/platform-apple/perf',
     '@agent-device/platform-apple/physical-device',
     '@agent-device/platform-apple/runner',
+    '@agent-device/platform-apple/runner-artifacts',
     '@agent-device/platform-apple/runner-owner',
     '@agent-device/platform-apple/runner/operations',
+    '@agent-device/platform-apple/runner/recording',
     // Test-only entry: the runner-requests.json check package and root tests share.
     '@agent-device/platform-apple/runner/requests-fixtures',
     '@agent-device/platform-apple/runner/test-host',

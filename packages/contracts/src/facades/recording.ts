@@ -13,7 +13,10 @@ export {
 export type { RecordingScope } from '../recording-scope.ts';
 export type {
   RecordingAppIdentity,
+  RecordingArtifactPublicationStatus,
   RecordingCommandResult,
+  RecordingSupplementalStatus,
+  ScreenRecordingCadence,
   RecordingStartCommandResult,
   RecordingStopCommandResult,
   TraceCommandResult,

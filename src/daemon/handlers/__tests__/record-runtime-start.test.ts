@@ -38,6 +38,56 @@ test('record start preserves the requested path while the runtime receives the e
   );
 });
 
+test('record start forwards the complete external XCTest selection into the Apple runtime', async () => {
+  const harness = makeRecordRuntimeHarness('record-runtime-runner-selection-', {
+    appBundleId: 'com.example.app',
+  });
+
+  await harness.run(['start', 'capture.mp4'], undefined, {
+    flags: {
+      iosXctestrunFile: '/artifacts/runner.xctestrun',
+      iosXctestDerivedDataPath: '/private/run/derived',
+      iosXctestEnvDir: '/private/run/env',
+    },
+  });
+
+  expect(harness.runtime.start).toHaveBeenCalledWith(
+    expect.objectContaining({
+      iosXctestrunFile: '/artifacts/runner.xctestrun',
+      iosXctestDerivedDataPath: '/private/run/derived',
+      iosXctestEnvDir: '/private/run/env',
+    }),
+  );
+});
+
+test('uncertain start reports a typed failure after adopting its exact cleanup handle', async () => {
+  const harness = makeRecordRuntimeHarness('record-runtime-uncertain-', {
+    appBundleId: 'com.example.app',
+    runtime: {
+      recoverableStartFailure: {
+        reason: 'runner_recording_start_uncertain',
+        message: 'runner start outcome is uncertain',
+      },
+    },
+  });
+
+  const response = await harness.run(['start', 'capture.mp4']);
+
+  expect(response).toMatchObject({
+    ok: false,
+    error: {
+      code: 'COMMAND_FAILED',
+      details: {
+        reason: 'runner_recording_start_uncertain',
+        recordingRecovery: 'stop-or-cleanup-exact-adopted-resource',
+      },
+    },
+  });
+  expect(harness.sessionStore.get(harness.sessionName)?.screenRecording?.handle).toBe(
+    harness.runtime.handle,
+  );
+});
+
 test.each(['linux', 'vega'] as const)(
   'record start on %s reports public unsupported guidance',
   async (platform) => {

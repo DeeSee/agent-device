@@ -215,6 +215,10 @@ extension RunnerTests {
 
   // MARK: - Command Handling
 
+  func recordingAlreadyActiveResponse() -> Response {
+    Response(ok: false, error: ErrorPayload(code: "RECORDING_ALREADY_ACTIVE", message: "recording already in progress"))
+  }
+
   @MainActor
   private func executeOnMainSafely(
     command: Command,
@@ -370,6 +374,10 @@ extension RunnerTests {
     alertDeadline: Date?,
     routeToSpringboard: Bool
   ) throws -> Response {
+    if command.command == .recordStart, activeRecording != nil {
+      // Reject duplicate recording authority before preparing or activating any target.
+      return recordingAlreadyActiveResponse()
+    }
     let preparation = prepareActiveCommandContext(
       command: command,
       routeToSpringboard: routeToSpringboard
@@ -403,9 +411,10 @@ extension RunnerTests {
       guard hasAppBundleId else {
         return Response(ok: false, error: ErrorPayload(message: "recordStart requires appBundleId"))
       }
-      if activeRecording != nil {
-        return Response(ok: false, error: ErrorPayload(message: "recording already in progress"))
+      guard let recordingStartCommandId = command.commandId?.trimmingCharacters(in: .whitespacesAndNewlines), !recordingStartCommandId.isEmpty else {
+        return Response(ok: false, error: ErrorPayload(code: "INVALID_ARGS", message: "recordStart requires commandId"))
       }
+      if activeRecording != nil { return recordingAlreadyActiveResponse() }
       if let requestedFps = command.fps, (requestedFps < minRecordingFps || requestedFps > maxRecordingFps) {
         return Response(ok: false, error: ErrorPayload(message: "recordStart fps must be between \(minRecordingFps) and \(maxRecordingFps)"))
       }
@@ -426,22 +435,25 @@ extension RunnerTests {
           guard let self else { return .failure(.unresolvedScreen) }
           return self.captureRunnerFrameResult(app: activeApp)
         }
-        activeRecording = recorder
+        activeRecording = ActiveRecording(recorder: recorder, startCommandId: recordingStartCommandId)
         return Response(ok: true, data: DataPayload(message: "recording started"))
       } catch {
         activeRecording = nil
         return Response(ok: false, error: Self.recordingStartErrorPayload(for: error))
       }
     case .recordStop:
-      guard let recorder = activeRecording else {
+      guard let recording = activeRecording else {
         // The runner protocol is the durable cleanup primitive. A daemon may crash after the
         // native stop succeeds but before it commits the resource transition, so exact-owner
         // recovery must be able to repeat this command safely. Public `record stop` still owns
         // its user-facing no-active validation through the daemon session manifest.
         return Response(ok: true, data: DataPayload(message: "recording already stopped"))
       }
+      guard let requestedStartCommandId = command.recordingStartCommandId?.trimmingCharacters(in: .whitespacesAndNewlines), requestedStartCommandId == recording.startCommandId else {
+        return Response(ok: false, error: ErrorPayload(code: "RECORDING_AUTHORITY_MISMATCH", message: "recordStop authority does not match the active recording"))
+      }
       do {
-        try recorder.stop()
+        try recording.recorder.stop()
         activeRecording = nil
         return Response(ok: true, data: DataPayload(message: "recording stopped"))
       } catch {

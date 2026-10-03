@@ -8,7 +8,7 @@ import {
 import { persistRecordingTelemetry } from '@agent-device/capture-kit/recording-telemetry';
 import {
   hasVideoContainer,
-  isPlayableVideo,
+  type VideoInspection,
   waitForPlayableVideo,
   waitForStableFile,
 } from '@agent-device/capture-kit/recording-video';
@@ -23,15 +23,89 @@ async function sniffRecording(input: Readonly<{ outputPath: string }>): Promise<
 
 async function finalizeScreenRecording(
   input: Parameters<ScreenRecordingRuntimeHost['finalize']['complete']>[0],
+  signal?: AbortSignal,
 ) {
-  await waitForStableFile(input.outputPath);
-  await waitForPlayableVideo(input.outputPath);
-  if (!(await isPlayableVideo(input.outputPath))) throw unplayableRecording(input.outputPath);
+  if (!input.showTouches) return await finalizeRawRecording(input, signal);
+  signal?.throwIfAborted();
+  await waitForStableFile(input.outputPath, { signal });
+  let finalInspection = await requirePlayableInspection(input.outputPath, signal);
+  signal?.throwIfAborted();
   const telemetryPath = persistRecordingTelemetry({
     recording: { outPath: input.outputPath, gestureEvents: [...input.gestureEvents] },
   });
-  if (!input.showTouches || input.gestureEvents.length === 0) return { telemetryPath };
-  return await overlayTouches(input, telemetryPath);
+  let overlayWarning: string | undefined;
+  if (input.showTouches && input.gestureEvents.length > 0) {
+    const overlay = await overlayTouches(input, telemetryPath);
+    finalInspection = overlay.inspection ?? finalInspection;
+    overlayWarning = overlay.overlayWarning;
+  }
+  return {
+    telemetryPath,
+    cadence: cadenceWithRequest(finalInspection, input.requestedFps),
+    supplemental: {
+      mediaInspection: finalInspection.status,
+      telemetry: 'written' as const,
+    },
+    ...(finalInspection.status === 'unavailable'
+      ? { warning: `recording cadence unavailable: ${finalInspection.reason}` }
+      : {}),
+    ...(overlayWarning === undefined ? {} : { overlayWarning }),
+  };
+}
+
+async function finalizeRawRecording(
+  input: Parameters<ScreenRecordingRuntimeHost['finalize']['complete']>[0],
+  signal?: AbortSignal,
+) {
+  const telemetry = signal?.aborted ? undefined : tryPersistRawTelemetry(input);
+  const telemetryStatus: 'written' | 'unavailable' = telemetry ? 'written' : 'unavailable';
+  return {
+    ...(telemetry ? { telemetryPath: telemetry } : {}),
+    supplemental: {
+      mediaInspection: 'unavailable' as const,
+      telemetry: telemetryStatus,
+    },
+    warning:
+      telemetryStatus === 'written'
+        ? 'raw recording is ready; supplemental media inspection was not performed'
+        : 'raw recording is ready; supplemental media inspection was not performed and telemetry is unavailable',
+  };
+}
+
+function tryPersistRawTelemetry(
+  input: Parameters<ScreenRecordingRuntimeHost['finalize']['complete']>[0],
+): string | undefined {
+  try {
+    return persistRecordingTelemetry({
+      recording: {
+        outPath: input.outputPath,
+        gestureEvents: [...input.gestureEvents],
+      },
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+async function requirePlayableInspection(
+  outputPath: string,
+  signal?: AbortSignal,
+): Promise<VideoInspection> {
+  const inspection = await waitForPlayableVideo(outputPath, { signal });
+  if (inspection.status === 'invalid') {
+    throw unplayableRecording(outputPath);
+  }
+  return inspection;
+}
+
+function cadenceWithRequest(
+  inspection: VideoInspection,
+  requestedFps: number | undefined,
+): VideoInspection {
+  return Object.freeze({
+    ...inspection,
+    ...(requestedFps === undefined ? {} : { requestedFps }),
+  });
 }
 
 async function overlayTouches(
@@ -39,7 +113,7 @@ async function overlayTouches(
   telemetryPath: string,
 ) {
   const warning = getRecordingOverlaySupportWarning();
-  if (warning) return { telemetryPath, overlayWarning: warning };
+  if (warning) return { overlayWarning: warning };
   try {
     await overlayRecordingTouches({
       videoPath: input.outputPath,
@@ -47,13 +121,9 @@ async function overlayTouches(
       exportQuality: input.exportQuality,
       targetLabel: input.targetLabel,
     });
-    if (!(await isPlayableVideo(input.outputPath))) {
-      throw new Error('recording post-processing produced an unplayable video');
-    }
-    return { telemetryPath };
+    return { inspection: await requirePlayableInspection(input.outputPath) };
   } catch (error) {
     return {
-      telemetryPath,
       overlayWarning: `failed to overlay recording touches: ${error instanceof Error ? error.message : String(error)}`,
     };
   }

@@ -9,6 +9,11 @@ import type {
 import { type ExecOptions, type ExecResult } from '@agent-device/host-kit/command';
 import type { ProviderScenarioTranscript } from './transcript.ts';
 
+const PROVIDER_RUNNER_LAUNCH_IDENTITY = Object.freeze({
+  selectorFingerprint: 'provider-transcript-selector',
+  testHostContainerBundleId: 'com.example.provider.runner',
+});
+
 export type FlatToolCall = [string, ...string[]];
 
 type RecordingAppleToolHandlers = {
@@ -23,13 +28,20 @@ export function createAppleRunnerProviderFromTranscript(
   transcript: ProviderScenarioTranscript,
   commandPrefix: 'ios.runner' | 'macos.runner' | 'tvos.runner',
 ): AppleRunnerProvider {
+  const runCommand: AppleRunnerProvider['runCommand'] = async (device, command) =>
+    transcript.next(`${commandPrefix}.${command.command}`, stripRunnerCommandId(command), {
+      deviceId: device.id,
+      platform: device.platform,
+    }) as Record<string, unknown>;
   return {
-    runCommand: async (device, command) =>
-      transcript.next(`${commandPrefix}.${command.command}`, stripRunnerCommandId(command), {
-        deviceId: device.id,
-        platform: device.platform,
-      }) as Record<string, unknown>,
-    // A scripted runner has no startup: the transcript answers every command directly.
+    runCommand,
+    runCommandWithReceipt: async (device, command, options) => ({
+      data: await runCommand(device, command, options),
+      receipt: {
+        runnerSessionId: `provider-transcript:${device.id}`,
+        launchIdentity: PROVIDER_RUNNER_LAUNCH_IDENTITY,
+      },
+    }),
     hasLiveSession: () => true,
   };
 }
@@ -63,14 +75,23 @@ export function createAppleRunnerScreenRecordingTransportFromTranscript(
       }
       active.set(result.runnerSessionId, { deviceId: device.id, appBundleId, outputPath });
       knownSessions.set(result.runnerSessionId, device.id);
-      return Object.freeze({ runnerSessionId: result.runnerSessionId });
+      return Object.freeze({
+        recordingAuthority: Object.freeze({
+          runnerSessionId: result.runnerSessionId,
+          launchIdentity: PROVIDER_RUNNER_LAUNCH_IDENTITY,
+          startCommandId: `provider-record-start:${result.runnerSessionId}`,
+        }),
+        startState: 'active' as const,
+      });
     },
-    inspect: async (device, runnerSessionId) => {
+    inspect: async (device, recordingAuthority) => {
+      const runnerSessionId = recordingAuthority.runnerSessionId;
       const recording = active.get(runnerSessionId);
       if (recording?.deviceId === device.id) return 'owned-alive';
       return knownSessions.get(runnerSessionId) === device.id ? 'missing' : 'ownership-lost';
     },
-    stop: async ({ device, runnerSessionId, appBundleId }) => {
+    stop: async ({ device, recordingAuthority, appBundleId }) => {
+      const runnerSessionId = recordingAuthority.runnerSessionId;
       const recording = active.get(runnerSessionId);
       if (
         recording?.deviceId !== device.id ||
@@ -86,6 +107,8 @@ export function createAppleRunnerScreenRecordingTransportFromTranscript(
       onStopped?.(recording.outputPath);
       active.delete(runnerSessionId);
     },
+    release: async () => undefined,
+    retrieve: async () => undefined,
   });
 }
 

@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
@@ -45,6 +47,8 @@ export function makeRunnerArtifact(
   overrides: Partial<RunnerXctestrunArtifact> = {},
 ): RunnerXctestrunArtifact {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,
@@ -58,12 +62,15 @@ export function makeRunnerArtifact(
 
 export function makeRunnerSession(overrides: Partial<RunnerSession> = {}): RunnerSession {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: `session-${overrides.port ?? 8100}`,
     device: IOS_SIMULATOR,
     deviceId: IOS_SIMULATOR.id,
     port: 8100,
     xctestrunPath: '/tmp/runner.xctestrun',
-    jsonPath: '/tmp/runner.json',
+    ownedEnvironmentFiles: ['/tmp/runner.xctestrun', '/tmp/runner.json'],
     testPromise: Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
     child: { pid: 1234, exitCode: null },
     state: 'ready',
@@ -77,7 +84,10 @@ export function makeRunnerLease(
 ): RunnerLease {
   const ownerToken = overrides.ownerToken ?? `owner-${process.pid}-test`;
   const lease: RunnerLease = {
-    schemaVersion: 1,
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    artifactSource: 'internal',
+
+    schemaVersion: 2,
     deviceId: overrides.deviceId,
     ownerToken,
     ownerPid: process.pid,
@@ -86,7 +96,10 @@ export function makeRunnerLease(
     runnerPid: 4242,
     port: 8123,
     xctestrunPath: `/tmp/AgentDeviceRunner.env.session-${overrides.deviceId}-${ownerToken}-8123.xctestrun`,
-    jsonPath: `/tmp/AgentDeviceRunner.env.session-${overrides.deviceId}-${ownerToken}-8123.json`,
+    ownedEnvironmentFiles: [
+      `/tmp/AgentDeviceRunner.env.session-${overrides.deviceId}-${ownerToken}-8123.xctestrun`,
+      `/tmp/AgentDeviceRunner.env.session-${overrides.deviceId}-${ownerToken}-8123.json`,
+    ],
     createdAtMs: Date.now(),
   };
   return { ...lease, ...overrides, ownerToken };
@@ -249,4 +262,19 @@ export function makeClassifyOwnerLivenessViaMocks(deps: {
     }
     return stateDir ? classifyStateDir(stateDir) : 'live';
   };
+}
+
+/** Session policy tests do not probe a real phone before exercising the mocked launch. */
+export function stubRunnerDeviceReadiness(): void {
+  const resolve = appleRunnerTestHost.defaults().resolveIosPhysicalDeviceControl;
+  appleRunnerTestHost.update({
+    resolveIosPhysicalDeviceControl: (device) => ({
+      ...resolve(device),
+      readDeviceReadiness: async () => ({
+        available: false,
+        reason: 'device_readiness_unreadable',
+        hint: 'Fixture has no physical device.',
+      }),
+    }),
+  });
 }

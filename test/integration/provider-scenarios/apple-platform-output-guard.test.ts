@@ -252,7 +252,16 @@ function permissiveRunner(): AppleRunnerProvider {
           return { done: true };
       }
     },
-    prepare: async () => ({ runner: { uptimeMs: 1 }, connectMs: 1, healthCheckMs: 1 }),
+    prepare: async () => ({
+      runner: { uptimeMs: 1 },
+      runnerSessionId: 'permissive-session',
+      launchIdentity: {
+        selectorFingerprint: 'permissive-selector',
+        testHostContainerBundleId: 'com.example.runner',
+      },
+      connectMs: 1,
+      healthCheckMs: 1,
+    }),
   };
 }
 

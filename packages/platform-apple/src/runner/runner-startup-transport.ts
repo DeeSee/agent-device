@@ -38,6 +38,7 @@ import type { RunnerSession } from './runner-session-types.ts';
 export type RunnerConnectionSession = Pick<
   RunnerSession,
   | 'startupRetryWake'
+  | 'listenerReadiness'
   | 'child'
   | 'startupDeviceStates'
   | 'state'
@@ -122,7 +123,7 @@ export async function waitForRunner(
         deadline,
         phase: 'ios_runner_connect',
         signal,
-        retryWakeSignal: device.kind === 'simulator' ? session?.startupRetryWake : undefined,
+        retryWakeSignal: session?.listenerReadiness.wake,
       },
     );
   } catch (error) {
@@ -130,6 +131,10 @@ export async function waitForRunner(
       throw createRequestCanceledError();
     }
     if (isUsbmuxDeviceUnattachedError(error)) throw error;
+    if (isRunnerListenerPortCollisionError(error)) throw error;
+    if (error instanceof AppError && error.details?.listenerReadiness === 'process_finished') {
+      throw error;
+    }
     if (!lastError) {
       lastError = error;
     }
@@ -229,6 +234,14 @@ async function ensureRunnerAttemptCanStart(params: {
       timeoutMs: params.timeoutMs,
     });
   }
+  const listenerState = params.session?.listenerReadiness?.state();
+  if (params.session && params.session.state !== 'ready' && listenerState === 'port_in_use') {
+    throw new AppError('COMMAND_FAILED', 'Runner listener port is already in use', {
+      reason: 'runner_listener_address_in_use',
+      dispatched: 'no',
+      listenerReadiness: listenerState,
+    });
+  }
   if (params.session?.child.exitCode !== null && params.session?.child.exitCode !== undefined) {
     throw await buildRunnerEarlyExitError({
       session: params.session,
@@ -236,6 +249,30 @@ async function ensureRunnerAttemptCanStart(params: {
       logPath: params.logPath,
     });
   }
+  if (params.session && params.session.state !== 'ready') {
+    if (listenerState === 'process_finished') {
+      const earlyExit = await buildRunnerEarlyExitError({
+        session: params.session,
+        port: params.port,
+        logPath: params.logPath,
+      });
+      throw new AppError(earlyExit.code, earlyExit.message, {
+        ...earlyExit.details,
+        listenerReadiness: listenerState,
+      });
+    }
+    if (listenerState === 'pending') {
+      throw new AppError('COMMAND_FAILED', 'Runner listener is not ready', {
+        port: params.port,
+        reason: 'runner_listener_pending',
+        dispatched: 'no',
+      });
+    }
+  }
+}
+
+function isRunnerListenerPortCollisionError(error: unknown): boolean {
+  return error instanceof AppError && error.details?.reason === 'runner_listener_address_in_use';
 }
 
 async function tryPrimaryRunnerRoute(params: {
@@ -597,6 +634,7 @@ export async function buildRunnerEarlyExitError(params: {
     new AppError('COMMAND_FAILED', message, { stderr: output, ...simulatorSet }),
   );
   const setDestinationMissing = setDestination.reason === 'simulator_set_destination_not_found';
+  const productMissing = setDestination.reason === 'runner_artifact_product_missing';
   // exec-guard-allow: xcodebuild can exit 0 and still count as an early exit;
   // the trio is nested tool context under `xcodebuild`, classified into
   // `reason`/`hint` above — not a process-exit wrap.
@@ -616,10 +654,11 @@ export async function buildRunnerEarlyExitError(params: {
         // already look, next to the file it came from.
         stderr: output,
       },
-      reason: setDestinationMissing ? setDestination.reason : reason,
-      hint: setDestinationMissing
-        ? setDestination.hint
-        : resolveRunnerEarlyExitHint(message, output, output, reason),
+      reason: setDestinationMissing || productMissing ? setDestination.reason : reason,
+      hint:
+        setDestinationMissing || productMissing
+          ? setDestination.hint
+          : resolveRunnerEarlyExitHint(message, output, output, reason),
       ...simulatorSet,
       ...runnerConnectFailureDetails('xcodebuild_exited_early'),
     },

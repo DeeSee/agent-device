@@ -1,3 +1,13 @@
+import type {
+  AppleRunnerCommandExecution,
+  AppleRunnerCommandOptions,
+  AppleRunnerPrepareOptions,
+  AppleRunnerPrepareResult,
+} from './runner-provider.ts';
+import {
+  runnerCommandDispatchWasAttempted,
+  RUNNER_COMMAND_TIMEOUT_MS,
+} from './runner-transport.ts';
 import {
   AppError,
   asAppError,
@@ -11,7 +21,6 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { ReadinessPhase } from '@agent-device/contracts/wait';
 import { emitDiagnostic } from './host.ts';
 import { RUNNER_STARTUP_TIMEOUT_MS } from './runner-startup-transport.ts';
-import { RUNNER_COMMAND_TIMEOUT_MS } from './runner-transport.ts';
 import {
   type RunnerSession,
   assertExpectedRunnerSession,
@@ -38,11 +47,6 @@ import {
   shouldRestartRunnerBeforeCommandSend,
   shouldRetryRunnerConnectError,
 } from './runner-error-classification.ts';
-import type {
-  AppleRunnerCommandOptions,
-  AppleRunnerPrepareOptions,
-  AppleRunnerPrepareResult,
-} from './runner-provider.ts';
 import { markRunnerXctestrunArtifactBadForRun } from './runner-xctestrun.ts';
 import { handleRunnerTransportErrorAfterCommandSend } from './runner-command-recovery.ts';
 import {
@@ -274,6 +278,14 @@ export async function executeRunnerCommand(
   command: RunnerCommand,
   options: AppleRunnerCommandOptions,
 ): Promise<Record<string, unknown>> {
+  return (await executeRunnerCommandWithReceipt(device, command, options)).data;
+}
+
+export async function executeRunnerCommandWithReceipt(
+  device: DeviceInfo,
+  command: RunnerCommand,
+  options: AppleRunnerCommandOptions,
+): Promise<AppleRunnerCommandExecution> {
   const exchange = { entered: false };
   try {
     return await executeRunnerCommandAttempt(device, command, options, exchange);
@@ -291,7 +303,7 @@ async function executeRunnerCommandAttempt(
   command: RunnerCommand,
   options: AppleRunnerCommandOptions,
   exchange: { entered: boolean },
-): Promise<Record<string, unknown>> {
+): Promise<AppleRunnerCommandExecution> {
   assertRunnerRequestActive(options.requestId);
   const signal = resolveRunnerRequestSignal(options);
   const recycleKey = runnerRecycleLedgerKey(options, command);
@@ -314,7 +326,11 @@ async function executeRunnerCommandAttempt(
       recycleBootBegun = true;
     }
     session = await ensureRunnerSession(device, options);
-    assertExpectedRunnerSession(session, options.expectedRunnerSessionId);
+    assertExpectedRunnerSession(
+      session,
+      options.expectedRunnerSessionId,
+      options.expectedRunnerLaunchIdentity,
+    );
     markRunnerSessionServed(session, command);
     if (recycleBootBegun) {
       commitRunnerRecycle(recycleKey);
@@ -326,7 +342,7 @@ async function executeRunnerCommandAttempt(
       timeoutMs = readRunnerStartupTimeoutMs(session);
     }
     exchange.entered = true;
-    return await executeRunnerCommandWithSession(
+    const data = await executeRunnerCommandWithSession(
       device,
       session,
       command,
@@ -334,9 +350,30 @@ async function executeRunnerCommandAttempt(
       timeoutMs,
       signal,
     );
+    return buildRunnerCommandExecution(session, data);
   } catch (error) {
-    if (options.expectedRunnerSessionId !== undefined) throw error;
     const appErr = asAppError(error, 'COMMAND_FAILED');
+    if (options.expectedRunnerSessionId !== undefined) {
+      if (
+        session &&
+        runnerCommandDispatchWasAttempted(appErr) &&
+        isRetryableRunnerError(appErr) &&
+        !isStructuredRunnerFailure(appErr)
+      ) {
+        const data = await handleRunnerTransportErrorAfterCommandSend({
+          device,
+          session,
+          command,
+          transportError: appErr,
+          options,
+          signal,
+          invalidationReason: 'exact_session_transport_error_after_command_send',
+          invalidateSession: async () => {},
+        });
+        return buildRunnerCommandExecution(session, data);
+      }
+      throw error;
+    }
     const runnerNeverAnswered = session
       ? session.state === 'starting'
       : livenessAtEntry !== 'ready';
@@ -382,7 +419,7 @@ async function executeRunnerCommandAttempt(
     // (a RUNNER_BUSY refusal, for one) already answered, so it is rethrown for the caller's own
     // resend policy instead of paying a status round trip per attempt.
     if (session && isRetryableRunnerError(appErr) && !isStructuredRunnerFailure(appErr)) {
-      return await handleRunnerTransportErrorAfterCommandSend({
+      const data = await handleRunnerTransportErrorAfterCommandSend({
         device,
         session,
         command,
@@ -392,6 +429,7 @@ async function executeRunnerCommandAttempt(
         invalidationReason: 'transport_error_after_command_send',
         invalidateSession: invalidateRunnerSession,
       });
+      return buildRunnerCommandExecution(session, data);
     }
     throw error;
   }
@@ -412,7 +450,7 @@ async function restartSessionAndRunCommand(params: {
    * can double-send, and no failure of this restart may claim `no`.
    */
   firstAttemptDispatched: DispatchDisclosure;
-}): Promise<Record<string, unknown>> {
+}): Promise<AppleRunnerCommandExecution> {
   const { device, command, options, signal, restartReason } = params;
   // At most one recycle per request: when the budget is spent, fail fast and KEEP the current
   // session — if the runner is merely busy draining abandoned work it answers the next request
@@ -425,10 +463,14 @@ async function restartSessionAndRunCommand(params: {
     );
   }
   await invalidateRunnerSession(params.session, restartReason);
-  const restartedSession = await ensureRunnerSession(device, {
-    ...options,
-    cleanStaleBundles: true,
-  }).catch((error: unknown) => {
+  const restartedSession = await ensureRunnerSession(
+    device,
+    {
+      ...options,
+      cleanStaleBundles: true,
+    },
+    { excludedPort: params.session.port },
+  ).catch((error: unknown) => {
     throw markRunnerRestartError(error, params);
   });
   commitRunnerRecycle(recycleKey);
@@ -453,12 +495,12 @@ async function restartSessionAndRunCommand(params: {
         },
       });
     }
-    return recovered;
+    return buildRunnerCommandExecution(restartedSession, recovered);
   } catch (error) {
     const retryAppErr = asAppError(error, 'COMMAND_FAILED');
     if (isRetryableRunnerError(retryAppErr) && !isStructuredRunnerFailure(retryAppErr)) {
       try {
-        return await handleRunnerTransportErrorAfterCommandSend({
+        const data = await handleRunnerTransportErrorAfterCommandSend({
           device,
           session: restartedSession,
           command,
@@ -468,6 +510,7 @@ async function restartSessionAndRunCommand(params: {
           invalidationReason: 'transport_error_after_retry_command_send',
           invalidateSession: invalidateRunnerSession,
         });
+        return buildRunnerCommandExecution(restartedSession, data);
       } catch (error) {
         throw markRunnerRestartError(error, params, restartedSession);
       }
@@ -634,6 +677,8 @@ function buildPrepareIosRunnerResult(
   if (!artifact) {
     return {
       runner,
+      runnerSessionId: session.sessionId,
+      launchIdentity: session.launchIdentity,
       connectMs: Math.max(0, connectMs),
       healthCheckMs: Math.max(0, healthCheckMs),
       ...reasonFields,
@@ -641,6 +686,8 @@ function buildPrepareIosRunnerResult(
   }
   return {
     runner,
+    runnerSessionId: session.sessionId,
+    launchIdentity: session.launchIdentity,
     cache: artifact.cache,
     artifact: artifact.artifact,
     buildMs: artifact.buildMs,
@@ -661,7 +708,7 @@ function recordPrepareResult(
 
 function emitPrepareDiagnostic(
   device: DeviceInfo,
-  result: Omit<PrepareIosRunnerResult, 'runner'>,
+  result: Omit<PrepareIosRunnerResult, 'runner' | 'runnerSessionId' | 'launchIdentity'>,
 ): void {
   emitDiagnostic({
     level: result.failureReason ? 'warn' : 'info',
@@ -683,5 +730,18 @@ function emitPrepareDiagnostic(
       recoveryReason: result.recoveryReason,
       failureReason: result.failureReason,
     },
+  });
+}
+
+function buildRunnerCommandExecution(
+  session: RunnerSession,
+  data: Record<string, unknown>,
+): AppleRunnerCommandExecution {
+  return Object.freeze({
+    data,
+    receipt: Object.freeze({
+      runnerSessionId: session.sessionId,
+      launchIdentity: Object.freeze({ ...session.launchIdentity }),
+    }),
   });
 }

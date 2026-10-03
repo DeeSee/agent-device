@@ -88,6 +88,7 @@ export function createDurableCaptureResource<
       sessionName: string;
       sessionStore: DurableCaptureSessionStore<S>;
       intent: DurableCaptureFinishIntent;
+      signal?: AbortSignal;
     }): Promise<C> {
       return finishLiveDurableCapture(
         definition,

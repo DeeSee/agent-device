@@ -114,9 +114,10 @@ test('the package gate runs the closure audit and both runtime probes', () => {
   }
 });
 
-test('the package gate disables the detached update notifier for its smoke probes', () => {
+test('the package gate isolates smoke-probe daemon side effects', () => {
   const gate = fs.readFileSync(path.join(repoRoot, 'scripts', 'check-package.ts'), 'utf8');
-  assert.match(gate, /env: \{ \.\.\.process\.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' \}/);
+  assert.ok(gate.includes("AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1'"));
+  assert.ok(gate.includes("AGENT_DEVICE_CLAIMS_DIR: path.join(workDir, 'device-claims')"));
 });
 
 // The gate reads the packed tarball, so `prepack` is the last point where a broken package can still

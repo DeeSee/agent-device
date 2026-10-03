@@ -78,7 +78,7 @@ export async function reattachAndroidRecording(params: {
   transport: Transport;
   device: Parameters<typeof nativeManifestMatchesEnvelope>[1];
   input: Parameters<ScreenRecordingRuntimeOperations['screenRecordingReattach']>[0];
-}) {
+}): ReturnType<ScreenRecordingRuntimeOperations['screenRecordingReattach']> {
   const { host, transport, device, input } = params;
   const parsed = androidScreenRecordingDescriptorCodec.decode(input.envelope.descriptor.body);
   if (parsed.status !== 'decoded') return unreattachable('descriptor-invalid');

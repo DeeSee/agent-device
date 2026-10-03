@@ -1,3 +1,4 @@
+import type { ScreenRecordingCadence, RecordingSupplementalStatus } from './recording.ts';
 import type { NativePathDisposition } from './recording-native-path.ts';
 import type { StopObservation } from './recording-stop-observation.ts';
 import type { ScreenRecordingChunk } from './screen-recording-runtime.ts';
@@ -5,6 +6,8 @@ import type { ScreenRecordingChunk } from './screen-recording-runtime.ts';
 /** What finalization produced: the export's own facts, and what became of the recorder's path. */
 export type ScreenRecordingFinalization = Readonly<{
   telemetryPath?: string;
+  cadence?: ScreenRecordingCadence;
+  supplemental?: RecordingSupplementalStatus;
   warning?: string;
   overlayWarning?: string;
   nativePathDisposition?: NativePathDisposition;

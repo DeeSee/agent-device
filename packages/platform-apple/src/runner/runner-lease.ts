@@ -20,7 +20,11 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { RunnerLogicalLeaseContext } from '@agent-device/contracts/runner-lease-context';
 import { runnerSimulatorSetPath } from './runner-device-set.ts';
 
-const RUNNER_LEASE_SCHEMA_VERSION = 1;
+import type { RunnerLaunchIdentity } from './runner-launch-identity.ts';
+import { sameRunnerLaunchIdentity } from './runner-session-types.ts';
+import { type RunnerRecordingAuthority, type RunnerRecordingPin } from './runner-session-types.ts';
+
+const RUNNER_LEASE_SCHEMA_VERSION = 2;
 const RUNNER_LEASE_LOCK_TIMEOUT_MS = 30_000;
 const RUNNER_LEASE_LOCK_POLL_MS = 100;
 const RUNNER_LEASE_OWNER_GRACE_MS = 5_000;
@@ -40,7 +44,7 @@ export function runnerOwnerToken(): string {
 }
 
 export type RunnerLease = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   deviceId: string;
   ownerToken: string;
   ownerPid: number;
@@ -52,7 +56,7 @@ export type RunnerLease = {
   port: number;
   xctestrunPath: string;
   cacheKey?: string;
-  jsonPath: string;
+
   /**
    * Where the leased runner's own output goes. The runner appends to this file for its whole life,
    * including across a daemon handoff, so the daemon that adopts it can point at it (#2681).
@@ -64,6 +68,10 @@ export type RunnerLease = {
    * and on leases written before a scoped-set runner could be handed off.
    */
   simulatorSetPath?: string;
+  ownedEnvironmentFiles: readonly string[];
+  launchIdentity: RunnerLaunchIdentity;
+  artifactSource: 'internal' | 'external';
+  recordingPin?: RunnerRecordingPin;
   createdAtMs: number;
   /**
    * The owner arbitrates device ownership through host-global device claims
@@ -93,7 +101,15 @@ type RunnerLeaseState =
 
 type RunnerLeaseRequiredFields = Pick<
   RunnerLease,
-  'createdAtMs' | 'jsonPath' | 'ownerPid' | 'ownerToken' | 'port' | 'sessionId' | 'xctestrunPath'
+  | 'artifactSource'
+  | 'createdAtMs'
+  | 'launchIdentity'
+  | 'ownerPid'
+  | 'ownerToken'
+  | 'ownedEnvironmentFiles'
+  | 'port'
+  | 'sessionId'
+  | 'xctestrunPath'
 >;
 
 /**
@@ -120,8 +136,12 @@ export function buildRunnerLease(params: {
   port: number;
   xctestrunPath: string;
   cacheKey?: string;
-  jsonPath: string;
+
   runnerLogPath?: string;
+  ownedEnvironmentFiles: readonly string[];
+  launchIdentity: RunnerLaunchIdentity;
+  artifactSource: RunnerLease['artifactSource'];
+  recordingPin?: RunnerRecordingPin;
 }): RunnerLease {
   const runnerLogPath = readOptionalNonEmptyString(params.runnerLogPath);
   return {
@@ -137,9 +157,13 @@ export function buildRunnerLease(params: {
     port: params.port,
     xctestrunPath: params.xctestrunPath,
     cacheKey: params.cacheKey,
-    jsonPath: params.jsonPath,
+
     ...(runnerLogPath ? { runnerLogPath } : {}),
     ...optionalSimulatorSetPath(runnerSimulatorSetPath(params.device)),
+    ownedEnvironmentFiles: [...params.ownedEnvironmentFiles],
+    launchIdentity: params.launchIdentity,
+    artifactSource: params.artifactSource,
+    ...(params.recordingPin ? { recordingPin: params.recordingPin } : {}),
     createdAtMs: Date.now(),
     deviceClaimProtocol: 1,
   };
@@ -164,16 +188,45 @@ export async function withRunnerLeaseLock<T>(deviceId: string, task: () => Promi
   });
 }
 
-function readRunnerLease(deviceId: string): RunnerLease | null {
+export function readRunnerLease(deviceId: string): RunnerLease | null {
+  let contents: string;
   try {
-    const parsed = JSON.parse(fs.readFileSync(resolveRunnerLeasePath(deviceId), 'utf8')) as unknown;
-    return normalizeRunnerLease(parsed, deviceId);
-  } catch {
-    return null;
+    contents = fs.readFileSync(resolveRunnerLeasePath(deviceId), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return null;
+    throw invalidRunnerLease(deviceId);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents) as unknown;
+  } catch {
+    throw invalidRunnerLease(deviceId);
+  }
+  const lease = normalizeRunnerLease(parsed, deviceId);
+  if (lease) return lease;
+  if (isLegacyRunnerLease(parsed, deviceId)) return null;
+  throw invalidRunnerLease(deviceId);
 }
 
-function classifyRunnerLease(lease: RunnerLease | null): RunnerLeaseState {
+function isLegacyRunnerLease(value: unknown, deviceId: string): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const raw = value as { schemaVersion?: unknown; deviceId?: unknown };
+  return raw.schemaVersion === 1 && raw.deviceId === deviceId;
+}
+
+function invalidRunnerLease(deviceId: string): AppError {
+  return new AppError(
+    'COMMAND_FAILED',
+    `The persisted iOS runner lease for ${deviceId} is invalid and cannot be recovered safely`,
+    {
+      reason: 'runner_lease_invalid',
+      deviceId,
+      hint: 'Do not infer cleanup paths from partial lease data. Stop the exact owning daemon or archive the invalid lease after confirming that no runner process is still live, then retry.',
+    },
+  );
+}
+
+export function classifyRunnerLease(lease: RunnerLease | null): RunnerLeaseState {
   if (!lease) return { type: 'empty' };
   if (lease.ownerToken === runnerOwnerToken()) return { type: 'owned', lease };
   const ownerLiveness = classifyOwnerLiveness({
@@ -198,6 +251,7 @@ export async function prepareRunnerLeaseForStartup(
     return;
   }
   if (state.type === 'busy') {
+    assertRunnerLeaseNotPinned(state.lease);
     if (isSameStateDirRunnerLease(state.lease)) {
       await cleanupLeasedRunnerProcesses(state.lease, 'same-state-dir', cleanup);
       return;
@@ -228,7 +282,22 @@ export async function prepareRunnerLeaseForStartup(
       },
     );
   }
+  assertRunnerLeaseNotPinned(state.lease);
   await cleanupLeasedRunnerProcesses(state.lease, state.type, cleanup);
+}
+
+function assertRunnerLeaseNotPinned(lease: RunnerLease): void {
+  if (!lease.recordingPin) return;
+  throw new AppError(
+    'COMMAND_FAILED',
+    'The iOS runner session is pinned until its recording is finalized or explicitly abandoned',
+    {
+      reason: 'runner_session_pinned',
+      deviceId: lease.deviceId,
+      sessionId: lease.sessionId,
+      recordingState: lease.recordingPin.state,
+    },
+  );
 }
 
 function isSameStateDirRunnerLease(lease: RunnerLease): boolean {
@@ -361,6 +430,25 @@ export function readStaleRunnerLease(deviceId: string): RunnerLease | null {
   return verdict.type === 'adoptable' ? verdict.lease : null;
 }
 
+/**
+ * Reconciles a pin whose recording descriptor was never durably adopted. The
+ * caller must first prove that no screen-recording resource owns the device.
+ */
+
+/**
+ * Resolves recording ownership directly from the durable lease after the
+ * session-owning daemon is gone. A dead exact runner clears only its own pin,
+ * making later generic startup cleanup possible without killing any process.
+ */
+
+/**
+ * Runs an idempotent stop against the exact live stale lease and commits the
+ * finalized state only after the runner confirms it. No ordinary adoption,
+ * selector resolution, restart, or process cleanup is involved.
+ */
+
+/** Copies only the media path sealed into the exact authority, then releases its pin. */
+
 // Marks a lease as handed off during graceful shutdown: the token no longer
 // matches this daemon, so the shutdown's own lease-cleanup paths skip it, and
 // once this process exits the lease classifies as stale for the next adopter.
@@ -374,6 +462,7 @@ export async function cleanupOwnedRunnerLease(
 ): Promise<void> {
   const state = classifyRunnerLease(readRunnerLease(deviceId));
   if (state.type === 'owned') {
+    assertRunnerLeaseNotPinned(state.lease);
     await cleanupLeasedRunnerProcesses(state.lease, 'owned', cleanup);
   }
 }
@@ -386,6 +475,7 @@ export async function cleanupRunnerLeasesForOwner(
   const leases = listRunnerLeasesForOwner(owner);
   await Promise.all(
     leases.map(async (lease) => {
+      assertRunnerLeaseNotPinned(lease);
       await cleanupLeasedRunnerProcesses(lease, 'owned', cleanup);
     }),
   );
@@ -494,7 +584,57 @@ function normalizeRunnerLease(value: unknown, deviceId: string): RunnerLease | n
     cacheKey: readOptionalNonEmptyString(raw.cacheKey),
     ...optionalSimulatorSetPath(raw.simulatorSetPath),
     ...(raw.deviceClaimProtocol === 1 ? { deviceClaimProtocol: 1 as const } : {}),
+    recordingPin: normalizePersistedRunnerRecordingPin(raw.recordingPin, {
+      runnerSessionId: fields.sessionId,
+      launchIdentity: fields.launchIdentity,
+    }),
   };
+}
+
+function readRunnerRecordingPin(value: unknown): RunnerRecordingPin | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const pin = value as Partial<RunnerRecordingPin>;
+  const authority = readRunnerRecordingAuthority(pin.authority);
+  const state = pin.state === 'nonfinalized' || pin.state === 'finalized' ? pin.state : null;
+  return authority && state ? Object.freeze({ authority, state }) : null;
+}
+
+function readRunnerRecordingAuthority(value: unknown): RunnerRecordingAuthority | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const authority = value as Partial<RunnerRecordingAuthority>;
+  const runnerSessionId = readNonEmptyString(authority.runnerSessionId);
+  const launchIdentity = readRunnerLaunchIdentity(authority.launchIdentity);
+  const startCommandId = readNonEmptyString(authority.startCommandId);
+  if (!runnerSessionId || !launchIdentity || !startCommandId) return null;
+  const remotePath = readOptionalString(authority.remotePath);
+  return Object.freeze({
+    runnerSessionId,
+    launchIdentity,
+    startCommandId,
+    ...(remotePath ? { remotePath } : {}),
+  });
+}
+
+function normalizePersistedRunnerRecordingPin(
+  value: unknown,
+  session: Pick<RunnerRecordingAuthority, 'launchIdentity' | 'runnerSessionId'>,
+): RunnerRecordingPin | undefined {
+  if (value === undefined) return undefined;
+  const decoded = readRunnerRecordingPin(value);
+  return (
+    (decoded &&
+    decoded.authority.runnerSessionId === session.runnerSessionId &&
+    sameRunnerLaunchIdentity(decoded.authority.launchIdentity, session.launchIdentity)
+      ? decoded
+      : undefined) ??
+    Object.freeze({
+      authority: Object.freeze({
+        ...session,
+        startCommandId: 'invalid-persisted-recording-pin',
+      }),
+      state: 'nonfinalized',
+    })
+  );
 }
 
 function readRunnerLeaseRequiredFields(
@@ -506,11 +646,33 @@ function readRunnerLeaseRequiredFields(
     sessionId: readNonEmptyString(raw.sessionId),
     port: readPositiveInteger(raw.port),
     xctestrunPath: readNonEmptyString(raw.xctestrunPath),
-    jsonPath: readNonEmptyString(raw.jsonPath),
+    ownedEnvironmentFiles: readOwnedEnvironmentFiles(raw.ownedEnvironmentFiles),
+    launchIdentity: readRunnerLaunchIdentity(raw.launchIdentity),
+    artifactSource: readArtifactSource(raw.artifactSource),
     createdAtMs: readFiniteNumber(raw.createdAtMs),
   };
   if (Object.values(fields).some((field) => field === null)) return null;
   return fields as RunnerLeaseRequiredFields;
+}
+
+function readOwnedEnvironmentFiles(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value)) return null;
+  const paths = value.map(readNonEmptyString);
+  return paths.every((entry): entry is string => entry !== null) ? Object.freeze(paths) : null;
+}
+
+function readRunnerLaunchIdentity(value: unknown): RunnerLaunchIdentity | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const identity = value as Partial<RunnerLaunchIdentity>;
+  const selectorFingerprint = readNonEmptyString(identity.selectorFingerprint);
+  const testHostContainerBundleId = readNonEmptyString(identity.testHostContainerBundleId);
+  return selectorFingerprint && testHostContainerBundleId
+    ? Object.freeze({ selectorFingerprint, testHostContainerBundleId })
+    : null;
+}
+
+function readArtifactSource(value: unknown): RunnerLease['artifactSource'] | null {
+  return value === 'internal' || value === 'external' ? value : null;
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -571,8 +733,9 @@ async function cleanupLeasedRunnerProcesses(
     xctestrunPath: lease.xctestrunPath,
   });
   await cleanup.cleanupRunnerProcessTree(resolveVerifiedLeaseRunnerPid(lease), 'SIGKILL');
-  cleanup.cleanupTempFile(lease.xctestrunPath);
-  cleanup.cleanupTempFile(lease.jsonPath);
+  for (const filePath of lease.ownedEnvironmentFiles) {
+    cleanup.cleanupTempFile(filePath);
+  }
   releaseRunnerLease(lease);
 }
 

@@ -130,6 +130,11 @@ export async function prepareXctestrunWithEnv(
   const parsed = await readXctestrunPlist(xctestrunPath);
   rebaseXctestrunProductReferences(parsed, path.dirname(path.resolve(xctestrunPath)));
 
+  if (dir !== path.resolve(path.dirname(xctestrunPath))) {
+    // __TESTROOT__ is relative to the xctestrun file. A private overlay directory
+    // therefore has to retain the immutable artifact's product root explicitly.
+    rebaseXctestrunProductReferences(parsed, path.resolve(path.dirname(xctestrunPath)));
+  }
   visitXctestrunTargets(parsed, (target) => mergeEnvIntoXctestrunTarget(target, envVars));
   // Xcode re-synthesizes these keys from its own defaults, not the test plan: building this
   // runner's plan (which sets keepNever) still yields SystemAttachmentLifetime=deleteOnSuccess on

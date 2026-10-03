@@ -14,6 +14,8 @@ export function recordCliOutput(result: CommandRequestResult): CliOutput {
   for (const chunk of chunks) {
     lines.push(`  ${chunk.index}: ${chunk.path}`);
   }
+  const cadenceLine = formatRecordingCadence(data.cadence);
+  if (cadenceLine) lines.push(cadenceLine);
   if (typeof data.telemetryPath === 'string') {
     lines.push(`Telemetry: ${data.telemetryPath}`);
   }
@@ -35,10 +37,45 @@ function formatRecordSingleOutput(data: Record<string, unknown>, outPath: string
   if (outPath) lines.push(outPath);
   if (typeof data.sessionStateDir === 'string')
     lines.push(`Session state: ${data.sessionStateDir}`);
+  const cadenceLine = formatRecordingCadence(data.cadence);
+  if (cadenceLine) lines.push(cadenceLine);
   if (typeof data.warning === 'string') lines.push(`Warning: ${data.warning}`);
   if (typeof data.overlayWarning === 'string')
     lines.push(`Overlay warning: ${data.overlayWarning}`);
   return lines.join('\n');
+}
+
+export function formatRecordingCadence(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const cadence = value as Record<string, unknown>;
+  if (cadence.status === 'unavailable' || cadence.status === 'invalid') {
+    return typeof cadence.reason === 'string'
+      ? `Cadence: ${cadence.status} (${cadence.reason})`
+      : `Cadence: ${cadence.status}`;
+  }
+  if (cadence.status !== 'measured') return undefined;
+  const details: string[] = [];
+  if (typeof cadence.requestedFps === 'number') {
+    details.push(`requested ${formatCadenceNumber(cadence.requestedFps)} FPS`);
+  }
+  if (typeof cadence.effectiveFps === 'number') {
+    details.push(`measured ${formatCadenceNumber(cadence.effectiveFps)} FPS`);
+  } else {
+    details.push('measured FPS unavailable');
+  }
+  if (typeof cadence.sampleCount === 'number') {
+    details.push(
+      `${formatCadenceNumber(cadence.sampleCount)} ${cadence.sampleCount === 1 ? 'sample' : 'samples'}`,
+    );
+  }
+  if (typeof cadence.maxInterSampleGapMs === 'number') {
+    details.push(`max gap ${formatCadenceNumber(cadence.maxInterSampleGapMs)}ms`);
+  }
+  return `Cadence: ${details.join(', ')}`;
+}
+
+function formatCadenceNumber(value: number): string {
+  return Number.isFinite(value) ? String(Number(value.toFixed(2))) : 'unavailable';
 }
 
 function readRecordingChunks(

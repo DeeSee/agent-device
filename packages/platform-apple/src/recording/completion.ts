@@ -17,6 +17,7 @@ export async function completeAppleRecording(params: {
   stopObservation: StopObservation;
   recorderWarning?: string;
   nativePathDisposition?: NativePathDisposition;
+  signal?: AbortSignal;
 }): Promise<Readonly<{ status: 'completed'; result: ScreenRecordingCompletion }>> {
   const { host, snapshot, targetLabel, recorderWarning, nativePathDisposition } = params;
   // An invalidated recording lost the session that held its recorder, so whatever signalled the
@@ -29,13 +30,19 @@ export async function completeAppleRecording(params: {
   }
   let finalization;
   try {
-    finalization = await host.screenRecording.finalize.complete({
-      outputPath: snapshot.outPath,
-      showTouches: snapshot.invalidatedReason ? false : snapshot.showTouches,
-      gestureEvents: snapshot.gestureEvents,
-      exportQuality: snapshot.exportQuality ?? 'medium',
-      targetLabel,
-    });
+    finalization = await host.screenRecording.finalize.complete(
+      {
+        outputPath: snapshot.outPath,
+        showTouches: snapshot.invalidatedReason ? false : snapshot.showTouches,
+        gestureEvents: snapshot.gestureEvents,
+        ...(snapshot.showTouches && !snapshot.invalidatedReason
+          ? { exportQuality: snapshot.exportQuality ?? 'medium' }
+          : {}),
+        requestedFps: snapshot.requestedFps,
+        targetLabel,
+      },
+      params.signal,
+    );
   } catch (error) {
     throw asAppError(error, 'COMMAND_FAILED');
   }
@@ -54,6 +61,7 @@ export async function completeAppleRecording(params: {
     },
     {
       stopObservation,
+      showTouches: snapshot.showTouches && !snapshot.invalidatedReason,
       ...(nativePathDisposition === undefined ? {} : { nativePathDisposition }),
     },
   );
@@ -77,6 +85,7 @@ export async function finalizeAppleRecordingFromCollected(
     exportPath: string;
     nativePath: string;
     overlayUnavailable?: string;
+    signal?: AbortSignal;
   }>,
 ): Promise<ScreenRecordingFinalization> {
   const { host, snapshot, targetLabel, collectedPath, exportPath, nativePath } = params;
@@ -88,15 +97,22 @@ export async function finalizeAppleRecordingFromCollected(
   const overlayUnavailability = params.overlayUnavailable ?? snapshot.invalidatedReason;
   let finalization: Awaited<ReturnType<typeof host.screenRecording.finalize.complete>>;
   try {
+    params.signal?.throwIfAborted();
     await host.screenRecording.outputs.copy({ from: collectedPath, to: exportPath });
     finalization = await asAppErrorAsync(() =>
-      host.screenRecording.finalize.complete({
-        outputPath: exportPath,
-        showTouches: overlayUnavailability === undefined && snapshot.showTouches,
-        gestureEvents: snapshot.gestureEvents,
-        exportQuality: snapshot.exportQuality ?? 'medium',
-        targetLabel,
-      }),
+      host.screenRecording.finalize.complete(
+        {
+          outputPath: exportPath,
+          showTouches: overlayUnavailability === undefined && snapshot.showTouches,
+          gestureEvents: snapshot.gestureEvents,
+          ...(overlayUnavailability === undefined && snapshot.showTouches
+            ? { exportQuality: snapshot.exportQuality ?? 'medium' }
+            : {}),
+          requestedFps: snapshot.requestedFps,
+          targetLabel,
+        },
+        params.signal,
+      ),
     );
   } catch (error) {
     // `--out` only ever holds bytes the finalizer accepted. The collected copy stays for the retry.

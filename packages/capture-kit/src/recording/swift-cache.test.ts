@@ -53,6 +53,18 @@ test('compileSwiftSourceFile compiles to a unique temp executable before publish
   expect(fs.existsSync(outputPath)).toBe(false);
 });
 
+test('compileSwiftSourceText forwards cancellation to the compiler boundary', async () => {
+  const controller = new AbortController();
+
+  await compileSwiftSourceText({
+    cacheName: 'cancel-aware-helper',
+    source: 'print("cancel-aware")',
+    signal: controller.signal,
+  });
+
+  expect(mockRunCmd.mock.calls[0]?.[2]).toMatchObject({ signal: controller.signal });
+});
+
 test('concurrent file-backed helper compiles for the same cache key reuse the winning executable', async () => {
   const sourcePath = writeSourceFile();
 

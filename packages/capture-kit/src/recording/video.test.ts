@@ -1,14 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runCmd } from '@agent-device/host-kit/command';
 import { likelyPlayableWebmContainer } from '../__tests__/test-utils/video-fixtures.ts';
 import { mkdtempForTestSync } from '../tmp-dir.fixtures.ts';
 import { mp4Atom, mp4MovieHeader } from './mp4.fixtures.ts';
-import { isPlayableVideo } from './video.ts';
+import { isPlayableVideo, waitForStableFile } from './video.ts';
 
 vi.mock('@agent-device/host-kit/command', () => ({
-  runCmd: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+  runCmd: vi.fn(async () => ({
+    exitCode: 0,
+    stdout: JSON.stringify({
+      status: 'measured',
+      source: 'media-pts',
+      sampleCount: 1,
+      mediaDurationMs: 0,
+      firstPtsMs: 0,
+      lastPtsMs: 0,
+    }),
+    stderr: '',
+  })),
 }));
 vi.mock('./swift-cache.ts', () => ({
   buildSwiftToolEnv: () => ({}),
@@ -52,4 +63,35 @@ test('refuses an MP4 container that never declares a movie header', async () => 
   const container = Buffer.concat([ftyp, mp4Atom('mdat', Buffer.alloc(8))]);
   await expect(isPlayableVideo(writeFixture('no-moov.mp4', container))).resolves.toBe(false);
   expect(runCmd).not.toHaveBeenCalled();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+test.each([
+  ['missing', [null, null, null]],
+  ['zero-byte', [0, 0, 0]],
+  ['continually-growing', [1, 2, 3]],
+] as const)('stable-file gate rejects %s output at exhaustion', async (_name, sizes) => {
+  vi.useFakeTimers();
+  let index = 0;
+  vi.spyOn(fs, 'statSync').mockImplementation(() => {
+    const size = sizes[Math.min(index, sizes.length - 1)];
+    index += 1;
+    if (size === null) throw new Error('missing');
+    return { size } as ReturnType<typeof fs.statSync>;
+  });
+
+  const outcome = waitForStableFile('/private/capture.mp4', {
+    attempts: 3,
+    pollMs: 10,
+  }).then(
+    () => ({ error: undefined }),
+    (error: unknown) => ({ error }),
+  );
+  await vi.runAllTimersAsync();
+  expect((await outcome).error).toEqual(
+    expect.objectContaining({ message: 'recording file did not become stable' }),
+  );
 });

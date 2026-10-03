@@ -1,5 +1,9 @@
 import type { GestureReferenceFrame, ScrollDirection } from './scroll-gesture.ts';
-import type { RecordingAppIdentity } from './recording.ts';
+import type {
+  RecordingAppIdentity,
+  RecordingSupplementalStatus,
+  ScreenRecordingCadence,
+} from './recording.ts';
 import type { StopObservation } from './recording-stop-observation.ts';
 import type { NativePathDisposition } from './recording-native-path.ts';
 import type { RecordingExportQuality } from './recording-export-quality.ts';
@@ -72,6 +76,7 @@ export type ScreenRecordingLiveSnapshot = Readonly<{
   recordOnlySession: boolean;
   activeSessionApp?: RecordingAppIdentity;
   exportQuality?: RecordingExportQuality;
+  requestedFps?: number;
   gestureEvents: readonly RecordingGestureEvent[];
   touchReferenceFrame?: GestureReferenceFrame;
   gestureClockOriginAtMs?: number;
@@ -111,6 +116,8 @@ export type ScreenRecordingCompletion = Readonly<{
   recordOnlySession: boolean;
   activeSessionApp?: RecordingAppIdentity;
   telemetryPath?: string;
+  cadence?: ScreenRecordingCadence;
+  supplemental?: RecordingSupplementalStatus;
   warning?: string;
   overlayWarning?: string;
   chunks?: readonly ScreenRecordingChunk[];
@@ -136,12 +143,19 @@ export type ScreenRecordingStartInput = Readonly<{
   activeSessionApp?: RecordingAppIdentity;
   exportQuality?: RecordingExportQuality;
   fps?: number;
+  iosXctestrunFile?: string;
+  iosXctestDerivedDataPath?: string;
+  iosXctestEnvDir?: string;
   fence: ResourceOwnershipFence;
 }>;
 
 export type ScreenRecordingStartResult = Readonly<{
   pendingHandle: PendingTransferGuard<ScreenRecordingLiveHandle>;
   envelope: DurableResourceEnvelope<typeof SCREEN_RECORDING_RESOURCE_KIND>;
+  recoverableStartFailure?: Readonly<{
+    reason: 'runner_recording_start_uncertain';
+    message: string;
+  }>;
 }>;
 
 export type ScreenRecordingReattachInput = Readonly<{

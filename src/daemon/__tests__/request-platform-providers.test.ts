@@ -33,6 +33,11 @@ import type {
 import { resolvePlatformProviderRequestContext } from '../request-platform-provider-context.ts';
 import type { DaemonRequest } from '../daemon-request.ts';
 
+const PROVIDER_RUNNER_LAUNCH_IDENTITY = Object.freeze({
+  selectorFingerprint: 'provider-selector',
+  testHostContainerBundleId: 'com.example.provider.runner',
+});
+
 const OTHER_IOS_SIMULATOR: DeviceInfo = {
   platform: 'apple',
   id: 'sim-2',
@@ -275,29 +280,36 @@ test('request provider context preserves an explicitly empty request id', async 
 });
 
 test('focused Apple runner recording authority remains exact across recreated request scopes', async () => {
-  let activeSessionId: string | undefined;
+  const recordingAuthority = Object.freeze({
+    runnerSessionId: 'provider-runner-session-1',
+    launchIdentity: PROVIDER_RUNNER_LAUNCH_IDENTITY,
+    startCommandId: 'provider-record-start-1',
+  });
+  let active = false;
   const transport: AppleRunnerScreenRecordingTransport = Object.freeze({
     authority: 'scoped-provider',
     available: true,
     start: async () => {
-      activeSessionId = 'provider-runner-session-1';
-      return { runnerSessionId: activeSessionId };
+      active = true;
+      return { recordingAuthority, startState: 'active' as const };
     },
-    inspect: async (device, runnerSessionId) =>
-      device.id === MACOS_DEVICE.id && runnerSessionId === activeSessionId
+    inspect: async (device, authority) =>
+      device.id === MACOS_DEVICE.id && authority === recordingAuthority && active
         ? 'owned-alive'
         : 'ownership-lost',
-    stop: async ({ device, runnerSessionId }) => {
+    stop: async ({ device, recordingAuthority: authority }) => {
       assert.equal(device.id, MACOS_DEVICE.id);
-      assert.equal(runnerSessionId, activeSessionId);
-      activeSessionId = undefined;
+      assert.equal(authority, recordingAuthority);
+      active = false;
     },
+    release: async () => undefined,
+    retrieve: async () => undefined,
   });
   const providers = {
     appleRunnerProvider: () => ({ runCommand: async () => ({}), hasLiveSession: () => true }),
     appleRunnerScreenRecordingTransport: () => transport,
   };
-  const runnerSessionId = await withRequestPlatformProviderScope(
+  const startedAuthority = await withRequestPlatformProviderScope(
     {
       req: request('record'),
       existingSession: makeMacOsSession('macos-session'),
@@ -312,7 +324,7 @@ test('focused Apple runner recording authority remains exact across recreated re
           appBundleId: 'com.example.app',
           outputPath: '/tmp/capture.mp4',
         })
-      ).runnerSessionId;
+      ).recordingAuthority;
     },
   );
 
@@ -324,9 +336,18 @@ test('focused Apple runner recording authority remains exact across recreated re
     },
     async () => {
       const resolved = resolveAppleRunnerScreenRecordingTransport();
-      assert.equal(await resolved.inspect(MACOS_DEVICE, runnerSessionId), 'owned-alive');
-      assert.equal(await resolved.inspect(MACOS_DEVICE, 'replacement-session'), 'ownership-lost');
-      await resolved.stop({ device: MACOS_DEVICE, runnerSessionId });
+      assert.equal(await resolved.inspect(MACOS_DEVICE, startedAuthority), 'owned-alive');
+      assert.equal(
+        await resolved.inspect(MACOS_DEVICE, {
+          ...startedAuthority,
+          startCommandId: 'replacement-command',
+        }),
+        'ownership-lost',
+      );
+      await resolved.stop({
+        device: MACOS_DEVICE,
+        recordingAuthority: startedAuthority,
+      });
     },
   );
 });

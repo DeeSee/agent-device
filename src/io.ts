@@ -55,6 +55,8 @@ export type ResolvedInputFile = {
 export type ReservedOutputFile = {
   path: string;
   visibility: OutputVisibility;
+  /** A rejected publish leaves the bytes at path intact and available to the caller. */
+  publicationFailurePreservesOutput?: true;
   publish: () => Promise<ArtifactDescriptor | undefined>;
   cleanup?: () => Promise<void>;
 };
@@ -131,6 +133,7 @@ export function createLocalArtifactAdapter(
       return {
         path: outputPath,
         visibility,
+        publicationFailurePreservesOutput: true,
         ...(tempRoot
           ? {
               cleanup: async () => {

@@ -1,3 +1,4 @@
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'vitest';
 import { mkdtempForTestSync } from './tmp-dir.ts';
@@ -108,7 +109,10 @@ function leaseFor(params: {
   stateDir: string;
 }): RunnerLease {
   return {
-    schemaVersion: 1,
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    artifactSource: 'internal',
+
+    schemaVersion: 2,
     deviceId: params.deviceId,
     ownerToken: runnerOwnerToken(),
     ownerPid: process.pid,
@@ -119,7 +123,10 @@ function leaseFor(params: {
     runnerStartTime: params.runnerStartTime,
     port: 8100,
     xctestrunPath: `${params.stateDir}/runner.xctestrun`,
-    jsonPath: `${params.stateDir}/runner.json`,
+    ownedEnvironmentFiles: [
+      `${params.stateDir}/runner.xctestrun`,
+      `${params.stateDir}/runner.json`,
+    ],
     createdAtMs: Date.now(),
   };
 }

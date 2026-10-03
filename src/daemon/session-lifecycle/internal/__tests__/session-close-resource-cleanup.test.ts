@@ -19,6 +19,7 @@ const {
   localRuntimeOwner,
   makeSession,
   makeSessionStore,
+  mockClearDeviceClaim,
   mockDispatchCommand,
   mockStopAndroidSnapshotHelperSessionForDevice,
   noopInvoke,
@@ -248,6 +249,7 @@ test('close preserves the session and lease when provider release fails so it ca
     },
   });
   expect(sessionStore.get(sessionName)?.lease?.leaseId).toBe(lease.leaseId);
+  expect(sessionStore.get(sessionName)?.closeRecovery).toEqual({ state: 'retry-required' });
   expect(leaseRegistry.listActiveLeases()).toHaveLength(1);
 
   const retried = await handleSessionCommands(request);
@@ -258,4 +260,34 @@ test('close preserves the session and lease when provider release fails so it ca
   expect(releaseAttempts).toBe(2);
   expect(sessionStore.get(sessionName)).toBeUndefined();
   expect(leaseRegistry.listActiveLeases()).toHaveLength(0);
+});
+
+test('close retains cleanup-only authority when device-claim clear fails', async () => {
+  const sessionStore = makeSessionStore();
+  const sessionName = 'claim-clear-failure-session';
+  sessionStore.set(sessionName, makeSession(sessionName, WEB_DESKTOP_DEVICE));
+  const clearFailure = new AppError('COMMAND_FAILED', 'device claim clear failed');
+  mockClearDeviceClaim.mockRejectedValueOnce(clearFailure);
+
+  const request = {
+    req: {
+      token: 't',
+      session: sessionName,
+      command: 'close',
+      positionals: [],
+      flags: {},
+    },
+    sessionName,
+    logPath: path.join(mkdtempForTestSync('daemon'), 'daemon.log'),
+    sessionStore,
+    invoke: noopInvoke,
+  };
+
+  await expect(handleSessionCommands(request)).rejects.toBe(clearFailure);
+  expect(sessionStore.get(sessionName)).toMatchObject({
+    closeRecovery: { state: 'retry-required' },
+  });
+
+  await expect(handleSessionCommands(request)).resolves.toMatchObject({ ok: true });
+  expect(sessionStore.get(sessionName)).toBeUndefined();
 });

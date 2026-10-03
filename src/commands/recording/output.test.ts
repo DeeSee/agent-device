@@ -25,6 +25,11 @@ describe('recordCliOutput', () => {
         'Android adb screenrecord is capped at 180s, so this recording was split into multiple MP4 chunks.',
       overlayWarning:
         'touch overlay burn-in is skipped for chunked Android recordings; returning raw chunks plus gesture telemetry',
+      cadence: {
+        status: 'unavailable',
+        source: 'media-pts',
+        reason: 'validator-unavailable',
+      },
       chunks: [
         { index: 1, path: '/tmp/recording.mp4' },
         { index: 2, path: '/tmp/recording.part-002.mp4' },
@@ -36,6 +41,7 @@ describe('recordCliOutput', () => {
         'Recording chunks:',
         '  1: /tmp/recording.mp4',
         '  2: /tmp/recording.part-002.mp4',
+        'Cadence: unavailable (validator-unavailable)',
         'Telemetry: /tmp/recording.gesture-telemetry.json',
         'Warning: Android adb screenrecord is capped at 180s, so this recording was split into multiple MP4 chunks.',
         'Overlay warning: touch overlay burn-in is skipped for chunked Android recordings; returning raw chunks plus gesture telemetry',
@@ -47,5 +53,30 @@ describe('recordCliOutput', () => {
         { index: 2, path: '/tmp/recording.part-002.mp4' },
       ],
     });
+  });
+
+  test('prints measured cadence for a single recording without inventing fields', () => {
+    const output = recordCliOutput({
+      recording: 'stopped',
+      outPath: '/tmp/recording.mp4',
+      cadence: {
+        status: 'measured',
+        source: 'media-pts',
+        requestedFps: 30,
+        sampleCount: 195,
+        mediaDurationMs: 23_733.33,
+        firstPtsMs: 266.67,
+        lastPtsMs: 23_900,
+        maxInterSampleGapMs: 233.333,
+        effectiveFps: 8.2087,
+      },
+    });
+
+    expect(output.text).toBe(
+      [
+        '/tmp/recording.mp4',
+        'Cadence: requested 30 FPS, measured 8.21 FPS, 195 samples, max gap 233.33ms',
+      ].join('\n'),
+    );
   });
 });

@@ -11,6 +11,11 @@ import type { SimulatorLease } from '../daemon/lease-registry.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { AppleRunnerScreenRecordingTransport } from '../platform-runtime-screen-recording-apple-runner-transport.ts';
 
+const PROVIDER_RUNNER_LAUNCH_IDENTITY = Object.freeze({
+  selectorFingerprint: 'provider-selector',
+  testHostContainerBundleId: 'com.example.provider.runner',
+});
+
 afterEach(() => {
   setActiveProviderDeviceRuntimes([]);
 });
@@ -75,10 +80,19 @@ test('provider device runtime composition exposes focused runner recording autho
   const transport: AppleRunnerScreenRecordingTransport = Object.freeze({
     authority: 'scoped-provider',
     available: true,
-    start: async () => ({ runnerSessionId: 'external-session-1' }),
-    inspect: async (_device, runnerSessionId) =>
-      runnerSessionId === 'external-session-1' ? 'owned-alive' : 'ownership-lost',
+    start: async () => ({
+      recordingAuthority: {
+        runnerSessionId: 'external-session-1',
+        launchIdentity: PROVIDER_RUNNER_LAUNCH_IDENTITY,
+        startCommandId: 'provider-record-start-1',
+      },
+      startState: 'active' as const,
+    }),
+    inspect: async (_device, authority) =>
+      authority.runnerSessionId === 'external-session-1' ? 'owned-alive' : 'ownership-lost',
     stop: async () => undefined,
+    release: async () => undefined,
+    retrieve: async () => undefined,
   });
   const runtime = {
     ...makeRuntime({

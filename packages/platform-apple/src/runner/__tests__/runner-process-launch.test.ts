@@ -221,6 +221,27 @@ test("ending output observation stops the tail and closes this process's descrip
   await waitFor(() => assert.equal(launched.startupRetryWake.aborted, false));
 });
 
+test('runner launch reports an authoritative listener bind collision from its log', async () => {
+  const logPath = runnerLogPath();
+  mockRunCmdBackground.mockReturnValue({
+    ...makeBackgroundRunner(4242),
+    wait: new Promise<{ stdout: string; stderr: string; exitCode: number }>(() => {}),
+  });
+  const launched = launchRunnerProcess({
+    device: IOS_SIMULATOR,
+    port: 8123,
+    xctestrunPath: '/tmp/runner.xctestrun',
+    derivedPath: '/tmp/runner-derived',
+    logPath,
+  });
+  fs.appendFileSync(
+    logPath,
+    'AGENT_DEVICE_RUNNER_LISTENER_FAILED=Code=48 "Address already in use"',
+  );
+  await waitFor(() => assert.equal(launched.listenerReadiness.state(), 'port_in_use'));
+  assert.equal(launched.listenerReadiness.wake.aborted, true);
+});
+
 async function waitFor(assertion: () => void, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;

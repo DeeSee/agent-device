@@ -99,6 +99,7 @@ export type RunnerCommand = {
     | 'shutdown';
   commandId?: string;
   statusCommandId?: string;
+  recordingStartCommandId?: string;
   appBundleId?: string;
   text?: string;
   selectorKey?: ElementSelectorKey;
@@ -393,6 +394,7 @@ export function buildRunnerResponseError(
   return new AppError(classification.code, errorMessage ?? 'Runner error', {
     runner: payload,
     ...classification.details,
+    runnerCommandOutcome: 'rejected',
     xcodebuild: {
       exitCode: 1,
       stdout: '',

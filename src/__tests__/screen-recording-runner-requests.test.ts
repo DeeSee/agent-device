@@ -3,7 +3,28 @@ import { assertProducedRunnerRequests } from '@agent-device/platform-apple/runne
 import { captureAppleClockAnchor } from '../platform-runtime-screen-recording-apple-runner-host.ts';
 import { resolveAppleRunnerScreenRecordingTransport } from '../platform-runtime-screen-recording-apple-runner-transport.ts';
 
-const runner = vi.hoisted(() => ({ run: vi.fn(), snapshot: vi.fn() }));
+const runner = vi.hoisted(() => ({
+  run: vi.fn(),
+  snapshot: vi.fn(),
+  acquire: vi.fn(),
+  receipt: vi.fn(),
+}));
+
+vi.mock('@agent-device/platform-apple/runner/recording', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@agent-device/platform-apple/runner/recording')>();
+  return {
+    loadAppleRunnerRecordingOperations: async () => ({
+      ...(await actual.loadAppleRunnerRecordingOperations()),
+      acquireRunnerRecordingPin: runner.acquire,
+      getRunnerSessionSnapshot: runner.snapshot,
+      assertRunnerRecordingAuthority: vi.fn(),
+      updateRunnerRecordingPin: vi.fn(),
+      runAppleRunnerCommand: runner.run,
+      runAppleRunnerCommandWithReceipt: runner.receipt,
+    }),
+  };
+});
 
 vi.mock('@agent-device/platform-apple/runner/operations', () => ({
   runAppleRunnerCommand: runner.run,
@@ -29,14 +50,28 @@ const macosDevice = {
 };
 
 test('screen recording runner requests match their runner-requests.json entries', async () => {
-  runner.snapshot.mockReturnValue({ sessionId: 'runner-session-1', liveness: 'ready' });
+  runner.snapshot.mockReturnValue({
+    sessionId: 'runner-session-1',
+    liveness: 'ready',
+    alive: true,
+  });
   runner.run.mockResolvedValue({});
+  runner.acquire.mockImplementation(async (_device, request) => ({
+    runnerSessionId: 'runner-session-1',
+    launchIdentity: {
+      selectorFingerprint: 'fixture',
+      testHostContainerBundleId: 'com.example.runner',
+    },
+    ...request,
+  }));
+  runner.receipt.mockImplementation(async (...args) => ({ data: await runner.run(...args) }));
   const transport = resolveAppleRunnerScreenRecordingTransport();
   const request = { appBundleId: 'com.example.app', outputPath: '/tmp/capture.mp4' };
 
   vi.setSystemTime(1_700_000_000_000);
+  let started;
   try {
-    await transport.start({ ...request, device, fps: 30 });
+    started = await transport.start({ ...request, device, fps: 30 });
   } finally {
     vi.useRealTimers();
   }
@@ -44,19 +79,24 @@ test('screen recording runner requests match their runner-requests.json entries'
   await transport.start({ ...request, device: macosDevice });
   await transport.stop({
     device,
-    runnerSessionId: 'runner-session-1',
+    recordingAuthority: started.recordingAuthority,
     appBundleId: 'com.example.app',
   });
-  await transport.stop({ device, runnerSessionId: 'runner-session-1' });
+  await transport.stop({ device, recordingAuthority: started.recordingAuthority });
   const controller = new AbortController();
   const reason = new Error('cancel after runner acquisition');
-  runner.snapshot.mockImplementationOnce(() => {
+  runner.receipt.mockImplementationOnce(async (...args) => {
+    await runner.run(...args);
     controller.abort(reason);
-    return { sessionId: 'runner-session-2', liveness: 'ready' };
+    return { data: {} };
   });
-  await expect(transport.start({ ...request, device, signal: controller.signal })).rejects.toBe(
-    reason,
-  );
+  const uncertain = await transport.start({ ...request, device, signal: controller.signal });
+  expect(uncertain.startState).toBe('uncertain');
+  await transport.stop({
+    device,
+    appBundleId: request.appBundleId,
+    recordingAuthority: uncertain.recordingAuthority,
+  });
   await captureAppleClockAnchor(simulator, 'com.example.app');
 
   const sent = runner.run.mock.calls.map((call) => call[1]);

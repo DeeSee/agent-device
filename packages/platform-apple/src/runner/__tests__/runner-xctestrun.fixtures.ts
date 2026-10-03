@@ -1,3 +1,4 @@
+import { resolveRunnerTestHostBundleId } from '../runner-cache-metadata.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,12 +55,18 @@ export function writeXctestrunFixture(
     )
     .join('\n');
   fs.mkdirSync(path.dirname(xctestrunPath), { recursive: true });
+  const host = options.productRelativePaths.find((item) => item.endsWith('.app'));
+  const target = host
+    ? `<key>RunnerTests</key><dict><key>TestHostBundleIdentifier</key><string>${escapeXmlText(resolveRunnerTestHostBundleId())}</string><key>TestHostPath</key><string>${escapeXmlText(`__TESTROOT__/${host}`)}</string></dict>`
+    : '';
+
   fs.writeFileSync(
     xctestrunPath,
     `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  ${target}
   <key>ProjectRootHint</key>
   <string>${escapeXmlText(options.projectRoot)}</string>
   <key>ProductPaths</key>
@@ -121,6 +128,11 @@ export const RUNNER_FIXTURE_EXECUTABLE_BYTES = Buffer.from('runner-executable\n'
 
 export async function seedRunnerProductBundle(bundlePath: string): Promise<void> {
   await fs.promises.mkdir(bundlePath, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(bundlePath, 'Info.plist'),
+    `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${escapeXmlText(resolveRunnerTestHostBundleId())}</string></dict></plist>`,
+  );
+
   await fs.promises.writeFile(
     path.join(bundlePath, path.basename(bundlePath, '.app')),
     RUNNER_FIXTURE_EXECUTABLE_BYTES,

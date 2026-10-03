@@ -6,7 +6,10 @@ import ObjectiveC.runtime
 private enum RunnerTargetActivationSpy {
   static var state: XCUIApplication.State = .unknown
   static var activationCount = 0
+  static var events: [String] = []
 }
+
+private typealias RunnerTargetActivationBlock = @convention(block) () -> Void
 
 private final class RunnerTargetActivationStub: NSObject {
   @objc var state: XCUIApplication.State {
@@ -15,6 +18,16 @@ private final class RunnerTargetActivationStub: NSObject {
 
   @objc func activate() {
     RunnerTargetActivationSpy.activationCount += 1
+    RunnerTargetActivationSpy.events.append("activate")
+  }
+
+  @objc(_performWithInteractionOptions:block:)
+  func performWithInteractionOptions(
+    _ options: UInt,
+    block: RunnerTargetActivationBlock
+  ) {
+    RunnerTargetActivationSpy.events.append("options:\(options)")
+    block()
   }
 }
 #endif
@@ -25,6 +38,9 @@ extension RunnerTests {
   func testActivateTargetSkipsForegroundAndActivatesNonForegroundApplication() {
     let stateSelector = #selector(getter: XCUIApplication.state)
     let activateSelector = #selector(XCUIApplication.activate)
+    let interactionOptionsSelector = NSSelectorFromString(
+      "_performWithInteractionOptions:block:"
+    )
     guard
       let stateMethod = class_getInstanceMethod(XCUIApplication.self, stateSelector),
       let stateStubMethod = class_getInstanceMethod(RunnerTargetActivationStub.self, stateSelector),
@@ -32,20 +48,36 @@ extension RunnerTests {
       let activateStubMethod = class_getInstanceMethod(
         RunnerTargetActivationStub.self,
         activateSelector
+      ),
+      let interactionOptionsMethod = class_getInstanceMethod(
+        XCUIApplication.self,
+        interactionOptionsSelector
+      ),
+      let interactionOptionsStubMethod = class_getInstanceMethod(
+        RunnerTargetActivationStub.self,
+        interactionOptionsSelector
       )
     else {
       return XCTFail("unable to install target activation spy")
     }
     let originalStateImplementation = method_getImplementation(stateMethod)
     let originalActivateImplementation = method_getImplementation(activateMethod)
+    let originalInteractionOptionsImplementation = method_getImplementation(interactionOptionsMethod)
     method_setImplementation(stateMethod, method_getImplementation(stateStubMethod))
     method_setImplementation(activateMethod, method_getImplementation(activateStubMethod))
+    method_setImplementation(
+      interactionOptionsMethod,
+      method_getImplementation(interactionOptionsStubMethod)
+    )
     RunnerTargetActivationSpy.activationCount = 0
+    RunnerTargetActivationSpy.events = []
     defer {
       method_setImplementation(stateMethod, originalStateImplementation)
       method_setImplementation(activateMethod, originalActivateImplementation)
+      method_setImplementation(interactionOptionsMethod, originalInteractionOptionsImplementation)
       RunnerTargetActivationSpy.state = .unknown
       RunnerTargetActivationSpy.activationCount = 0
+      RunnerTargetActivationSpy.events = []
       invalidateCachedTarget(reason: "unit_test_cleanup")
     }
 
@@ -60,6 +92,7 @@ extension RunnerTests {
     pendingTargetActivation = nil
     _ = activateTarget(bundleId: "com.example.foreground", reason: "unit_test")
     XCTAssertEqual(RunnerTargetActivationSpy.activationCount, 0)
+    XCTAssertEqual(RunnerTargetActivationSpy.events, [])
     XCTAssertNil(textEntryTapWitness)
     XCTAssertNil(
       pendingTargetActivation,
@@ -67,6 +100,7 @@ extension RunnerTests {
     )
 
     RunnerTargetActivationSpy.state = .runningBackground
+    RunnerTargetActivationSpy.events = []
     _ = activateTarget(bundleId: "com.example.background", reason: "unit_test")
     XCTAssertEqual(RunnerTargetActivationSpy.activationCount, 1)
     // The stamped state is the one read BEFORE `activate()` ran, so the fact describes what was
@@ -76,6 +110,10 @@ extension RunnerTests {
       Int(XCUIApplication.State.runningBackground.rawValue)
     )
     XCTAssertEqual(pendingTargetActivation?.reason, "unit_test")
+    XCTAssertEqual(
+      RunnerTargetActivationSpy.events,
+      ["options:3", "activate"]
+    )
   }
 #endif
 

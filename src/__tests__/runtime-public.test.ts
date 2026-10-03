@@ -124,6 +124,7 @@ test('local artifact adapter marks command outputs and temp files by visibility'
   });
 
   assert.equal(output.visibility, 'client-visible');
+  assert.equal(output.publicationFailurePreservesOutput, true);
   assert.equal(temp.visibility, 'internal');
 
   await output.cleanup?.();

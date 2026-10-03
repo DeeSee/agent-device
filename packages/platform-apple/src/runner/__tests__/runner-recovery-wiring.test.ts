@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import http from 'node:http';
@@ -106,12 +108,15 @@ afterEach(async () => {
 
 function makeRunnerSession(port: number, sessionId = `wiring:${port}`): RunnerSession {
   const session: RunnerSession = {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId,
     device: IOS_SIMULATOR,
     deviceId: IOS_SIMULATOR.id,
     port,
     xctestrunPath: '/tmp/wiring.xctestrun',
-    jsonPath: '/tmp/wiring.json',
+    ownedEnvironmentFiles: ['/tmp/wiring.xctestrun', '/tmp/wiring.json'],
     testPromise: new Promise<ExecResult>(() => {}),
     child: { pid: process.pid, exitCode: null },
     state: 'ready',

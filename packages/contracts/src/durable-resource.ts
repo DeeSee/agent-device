@@ -40,7 +40,7 @@ export type DurableCaptureProgress = Readonly<{
 /** Common lifecycle shape implemented by a facet-specific live handle contract. */
 export type LiveResourceHandle<Result> = AsyncDisposable &
   Readonly<{
-    finish(progress?: DurableCaptureProgress): Promise<FinishOutcome<Result>>;
+    finish(progress?: DurableCaptureProgress, signal?: AbortSignal): Promise<FinishOutcome<Result>>;
     forceCleanup(): Promise<CleanupOutcome>;
   }>;
 

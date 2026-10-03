@@ -4,7 +4,11 @@ import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { writeHostBinaryFile } from '@agent-device/host-kit/host-file';
 import { runIosDevicectl } from './devicectl.ts';
 import { copyCoreDeviceRunnerFile } from './physical-device-files.ts';
-import type { AppleRunnerCommandExecutor, AppleRunnerCommandOptions } from '../runner/index.ts';
+import type {
+  AppleRunnerCommandExecution,
+  AppleRunnerCommandReceiptExecutor,
+  AppleRunnerCommandOptions,
+} from '../runner/runner-provider.ts';
 import { appleToolFailureText, extractAppleToolErrorMeta } from './tool-diagnostics.ts';
 import { resolveAppleToolProvider, type AppleToolProvider } from './tool-provider.ts';
 
@@ -15,7 +19,7 @@ export type IosPhysicalDeviceScreenshotOptions = {
   fullscreen?: boolean;
   runnerOptions?: AppleRunnerCommandOptions;
   preferRunner?: boolean;
-  runRunnerCommand: AppleRunnerCommandExecutor;
+  runRunnerCommandWithReceipt: AppleRunnerCommandReceiptExecutor;
 };
 
 export async function captureCoreDeviceScreenshot(
@@ -41,11 +45,16 @@ export async function captureCoreDeviceScreenshot(
     }
   }
 
-  const result = await runRunnerScreenshot(device, options, false);
-  if (await writeInlineRunnerScreenshot(result, outPath)) return;
+  const execution = await runRunnerScreenshot(device, options, false);
+  if (await writeInlineRunnerScreenshot(execution.data, outPath)) return;
 
-  const remoteFileName = readRunnerScreenshotPath(result);
-  await copyCoreDeviceRunnerFile(device, remoteFileName, outPath);
+  const remoteFileName = readRunnerScreenshotPath(execution.data);
+  await copyCoreDeviceRunnerFile(
+    device,
+    remoteFileName,
+    outPath,
+    execution.receipt.launchIdentity.testHostContainerBundleId,
+  );
 }
 
 export async function captureXctestDeviceScreenshot(
@@ -53,8 +62,8 @@ export async function captureXctestDeviceScreenshot(
   outPath: string,
   options: IosPhysicalDeviceScreenshotOptions,
 ): Promise<void> {
-  const result = await runRunnerScreenshot(device, options, true);
-  if (await writeInlineRunnerScreenshot(result, outPath)) return;
+  const execution = await runRunnerScreenshot(device, options, true);
+  if (await writeInlineRunnerScreenshot(execution.data, outPath)) return;
   throw new AppError(
     'COMMAND_FAILED',
     'Failed to capture iOS screenshot: XCTest runner returned no inline image',
@@ -69,8 +78,8 @@ async function runRunnerScreenshot(
   device: DeviceInfo,
   options: IosPhysicalDeviceScreenshotOptions,
   inlineScreenshot: boolean,
-): Promise<Record<string, unknown>> {
-  return await options.runRunnerCommand(
+): Promise<AppleRunnerCommandExecution> {
+  return await options.runRunnerCommandWithReceipt(
     device,
     {
       command: 'screenshot',

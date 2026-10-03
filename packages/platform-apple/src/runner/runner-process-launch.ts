@@ -12,7 +12,10 @@ import {
   readRunnerLogTail,
   tailRunnerLogFile,
 } from './runner-io.ts';
-import { createRunnerListenerReadySignal } from './runner-listener-ready.ts';
+import {
+  createRunnerListenerReadySignal,
+  type RunnerListenerReadiness,
+} from './runner-listener-ready.ts';
 
 const RUNNER_DESTINATION_TIMEOUT_SECONDS = 20;
 
@@ -31,6 +34,7 @@ type LaunchRunnerProcessInput = Readonly<{
 export type LaunchedRunnerProcess = ExecBackgroundResult &
   Readonly<{
     startupRetryWake: AbortSignal;
+    listenerReadiness: RunnerListenerReadiness;
     /** Gives up this process's sides of the runner's log; see {@link launchRunnerProcess}. */
     endOutputObservation: () => void;
     /** Reads the end of the runner's log, which the runner itself keeps writing to (#2681). */
@@ -118,6 +122,7 @@ export function launchRunnerProcess(input: LaunchRunnerProcessInput): LaunchedRu
     return {
       ...launched,
       startupRetryWake: listenerReady.wake,
+      listenerReadiness: listenerReady,
       endOutputObservation,
       readLogTail: (maxBytes) => readRunnerLogTail(logFile, maxBytes),
     };

@@ -99,6 +99,14 @@
     "./tool-provider": {
       "types": "./src/tool-provider-facade.ts",
       "default": "./src/tool-provider-facade.ts"
+    },
+    "./runner-artifacts": {
+      "types": "./src/runner-artifacts-facade.ts",
+      "default": "./src/runner-artifacts-facade.ts"
+    },
+    "./runner/recording": {
+      "types": "./src/runner-recording-facade.ts",
+      "default": "./src/runner-recording-facade.ts"
     }
   }
 }

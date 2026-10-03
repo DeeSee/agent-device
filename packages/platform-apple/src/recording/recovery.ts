@@ -13,7 +13,10 @@ import type {
   OwnedProcessRecordScope,
 } from '@agent-device/contracts/platform-runtime-host';
 import type { RuntimeOwnerRef } from '@agent-device/contracts/platform-runtime';
-import type { ScreenRecordingRuntimeHost } from '@agent-device/contracts/screen-recording-runtime-host';
+import type {
+  ScreenRecordingRuntimeHost,
+  AppleRunnerRecordingAuthority,
+} from '@agent-device/contracts/screen-recording-runtime-host';
 import { isRecord } from '@agent-device/kernel/record';
 import {
   SCREEN_RECORDING_RESOURCE_KIND,
@@ -70,9 +73,9 @@ export type AppleRecordingDescriptor =
       backend: 'runner';
       outputPath: string;
       appBundleId: string;
-      runnerSessionId: string;
       runnerAuthority: 'local-lease' | 'scoped-provider';
-      remotePath?: string;
+      recordingAuthority: AppleRunnerRecordingAuthority;
+      startState: 'active' | 'uncertain';
     }>;
 
 type AppleRecordingDescriptorCodec = DurableDescriptorCodec<
@@ -94,16 +97,16 @@ const encodeAppleRecordingDescriptor: AppleRecordingDescriptorCodec['encode'] = 
     backend: descriptor.backend,
     outputPath: descriptor.outputPath,
     appBundleId: descriptor.appBundleId,
-    runnerSessionId: descriptor.runnerSessionId,
     runnerAuthority: descriptor.runnerAuthority,
-    ...(descriptor.remotePath === undefined ? {} : { remotePath: descriptor.remotePath }),
+    recordingAuthority: descriptor.recordingAuthority,
+    startState: descriptor.startState,
   };
   return encoded;
 };
 
 const descriptorCodec: AppleRecordingDescriptorCodec = Object.freeze({
   resourceKind: SCREEN_RECORDING_RESOURCE_KIND,
-  version: 1,
+  version: 2,
   encode: encodeAppleRecordingDescriptor,
   decode: (body) => decodeAppleRecordingDescriptor(body),
 });
@@ -204,7 +207,7 @@ async function cleanupRunner(
   try {
     const ownership = await host.screenRecording.apple.inspectRunner(
       device,
-      descriptor.runnerSessionId,
+      descriptor.recordingAuthority,
       descriptor.runnerAuthority,
     );
     if (ownership === 'missing') return { status: 'already-missing' };
@@ -214,8 +217,14 @@ async function cleanupRunner(
     await host.screenRecording.apple.runRunner(device, {
       kind: 'stop',
       appBundleId: descriptor.appBundleId,
-      runnerSessionId: descriptor.runnerSessionId,
       runnerAuthority: descriptor.runnerAuthority,
+      recordingAuthority: descriptor.recordingAuthority,
+    });
+    await host.screenRecording.apple.runRunner(device, {
+      kind: 'release',
+      runnerAuthority: descriptor.runnerAuthority,
+      recordingAuthority: descriptor.recordingAuthority,
+      reason: 'abandoned',
     });
     return { status: 'cleaned' };
   } catch (error) {
@@ -341,7 +350,7 @@ async function reattachRunnerRecording(
 ): Promise<AppleRecordingReattachment> {
   const ownership = await host.screenRecording.apple.inspectRunner(
     device,
-    descriptor.runnerSessionId,
+    descriptor.recordingAuthority,
     descriptor.runnerAuthority,
   );
   if (ownership === 'missing') return { status: 'missing' };
@@ -435,20 +444,43 @@ function isWholeExportCoordinates(
 
 function decodeRunnerDescriptor(body: Record<string, unknown>, outputPath: string) {
   if (!isNonemptyString(body.appBundleId)) return invalidDescriptor();
-  if (!isNonemptyString(body.runnerSessionId)) return invalidDescriptor();
   if (!isRunnerAuthority(body.runnerAuthority)) return invalidDescriptor();
-  if (!isOptionalCanonicalRemotePath(body.remotePath)) return invalidDescriptor();
+  const recordingAuthority = decodeRunnerRecordingAuthority(body.recordingAuthority);
+  if (!recordingAuthority) return invalidDescriptor();
+  if (body.startState !== 'active' && body.startState !== 'uncertain') return invalidDescriptor();
   return {
     status: 'decoded',
     descriptor: Object.freeze({
       backend: 'runner',
       outputPath,
       appBundleId: body.appBundleId,
-      runnerSessionId: body.runnerSessionId,
       runnerAuthority: body.runnerAuthority,
-      ...(body.remotePath === undefined ? {} : { remotePath: body.remotePath }),
+      recordingAuthority,
+      startState: body.startState,
     }),
   } as const;
+}
+
+function decodeRunnerRecordingAuthority(value: unknown): AppleRunnerRecordingAuthority | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const authority = value as Partial<AppleRunnerRecordingAuthority>;
+  const identity = authority.launchIdentity;
+  return isNonemptyString(authority.runnerSessionId) &&
+    isNonemptyString(authority.startCommandId) &&
+    identity !== undefined &&
+    isNonemptyString(identity.selectorFingerprint) &&
+    isNonemptyString(identity.testHostContainerBundleId) &&
+    isOptionalCanonicalRemotePath(authority.remotePath)
+    ? Object.freeze({
+        runnerSessionId: authority.runnerSessionId,
+        startCommandId: authority.startCommandId,
+        launchIdentity: Object.freeze({
+          selectorFingerprint: identity.selectorFingerprint,
+          testHostContainerBundleId: identity.testHostContainerBundleId,
+        }),
+        ...(authority.remotePath === undefined ? {} : { remotePath: authority.remotePath }),
+      })
+    : null;
 }
 
 function isNonemptyString(value: unknown): value is string {
@@ -481,10 +513,11 @@ function descriptorMatchesAppleDevice(
 ): boolean {
   if (device.kind === 'simulator') return descriptor.backend === 'simctl';
   if (descriptor.backend !== 'runner') return false;
-  if (device.appleOs === 'macos') return descriptor.remotePath === undefined;
+  if (device.appleOs === 'macos') return descriptor.recordingAuthority.remotePath === undefined;
   return isIosFamily(device)
-    ? descriptor.remotePath !== undefined && isCanonicalRunnerRemotePath(descriptor.remotePath)
-    : descriptor.remotePath === undefined;
+    ? descriptor.recordingAuthority.remotePath !== undefined &&
+        isCanonicalRunnerRemotePath(descriptor.recordingAuthority.remotePath)
+    : descriptor.recordingAuthority.remotePath === undefined;
 }
 
 function decodeProcessIdentities(value: unknown): readonly ManagedProcessIdentity[] | undefined {

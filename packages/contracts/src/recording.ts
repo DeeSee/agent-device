@@ -8,6 +8,50 @@ export type RecordingAppIdentity = {
   name?: string;
 };
 
+/** Cadence measured from immutable media samples, never inferred from requested FPS. */
+export type ScreenRecordingCadence =
+  | Readonly<{
+      status: 'measured';
+      source: 'media-pts';
+      requestedFps?: number;
+      sampleCount: number;
+      mediaDurationMs: number;
+      firstPtsMs?: number;
+      lastPtsMs?: number;
+      maxInterSampleGapMs?: number;
+      effectiveFps?: number;
+    }>
+  | Readonly<{
+      status: 'unavailable';
+      source: 'media-pts';
+      requestedFps?: number;
+      reason: 'unsupported-container' | 'validator-unavailable';
+    }>
+  | Readonly<{
+      status: 'invalid';
+      source: 'media-pts';
+      requestedFps?: number;
+      reason:
+        | 'container-invalid'
+        | 'unplayable-or-duration-invalid'
+        | 'missing-video-track'
+        | 'missing-video-samples'
+        | 'sample-timing-invalid'
+        | 'reader-failed'
+        | 'probe-failed';
+    }>;
+
+/** Optional work performed only after the raw recording bytes are terminal. */
+export type RecordingSupplementalStatus = Readonly<{
+  mediaInspection: 'measured' | 'invalid' | 'unavailable';
+  telemetry: 'written' | 'unavailable';
+}>;
+
+export type RecordingArtifactPublicationStatus = Readonly<{
+  status: 'unavailable';
+  reason: 'adapter-failed';
+}>;
+
 export type RecordingStartCommandResult = {
   recording: 'started';
   outPath: string;
@@ -45,6 +89,9 @@ export type RecordingStopCommandResult = {
    */
   nativePathDisposition?: NativePathDisposition;
   showTouches: boolean;
+  cadence?: ScreenRecordingCadence;
+  supplemental?: RecordingSupplementalStatus;
+  artifactPublication?: RecordingArtifactPublicationStatus;
   warning?: string;
   overlayWarning?: string;
   chunks?: Array<{

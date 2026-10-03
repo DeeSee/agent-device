@@ -101,6 +101,8 @@ export function buildRecordingStopResponse(completion: ScreenRecordingCompletion
         ? {}
         : { nativePathDisposition: completion.nativePathDisposition }),
       showTouches: completion.showTouches,
+      cadence: completion.cadence,
+      ...(completion.supplemental ? { supplemental: completion.supplemental } : {}),
       warning: completion.warning,
       overlayWarning: completion.overlayWarning,
       chunks: completion.chunks?.map((chunk) => ({

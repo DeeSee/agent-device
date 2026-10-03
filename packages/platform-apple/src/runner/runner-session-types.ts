@@ -1,5 +1,7 @@
+import { AppError } from '@agent-device/kernel/errors';
 import type { RunnerLogicalLeaseContext } from '@agent-device/contracts/runner-lease-context';
 import type { ExecResult } from '@agent-device/host-kit/command';
+import type { AppleRunnerRecordingAuthority } from '@agent-device/contracts/screen-recording-runtime-host';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { Deadline } from './host.ts';
 import type { RunnerXctestrunArtifact } from './runner-xctestrun.ts';
@@ -40,6 +42,8 @@ export type RunnerSessionRegistration = Readonly<{
   sessionId: string;
   liveness: RunnerSessionLiveness;
 }>;
+import type { RunnerLaunchIdentity } from './runner-launch-identity.ts';
+import type { RunnerListenerReadiness } from './runner-listener-ready.ts';
 
 // The runner process seen through the session: pid for liveness/kill-tree and
 // exitCode for early-exit detection. A spawned ChildProcess satisfies this
@@ -50,6 +54,25 @@ export type RunnerProcessHandle = {
   exitCode: number | null;
 };
 
+export type RunnerRecordingAuthority = AppleRunnerRecordingAuthority;
+
+export function sameRunnerRecordingAuthority(
+  left: RunnerRecordingAuthority,
+  right: RunnerRecordingAuthority,
+): boolean {
+  return (
+    left.runnerSessionId === right.runnerSessionId &&
+    sameRunnerLaunchIdentity(left.launchIdentity, right.launchIdentity) &&
+    left.startCommandId === right.startCommandId &&
+    left.remotePath === right.remotePath
+  );
+}
+
+export type RunnerRecordingPin = Readonly<{
+  authority: RunnerRecordingAuthority;
+  state: 'nonfinalized' | 'finalized';
+}>;
+
 export type RunnerSession = {
   sessionId: string;
   device: DeviceInfo;
@@ -57,7 +80,7 @@ export type RunnerSession = {
   port: number;
   xctestrunPath: string;
   xctestrunArtifact?: RunnerXctestrunArtifact;
-  jsonPath: string;
+
   /**
    * Where this runner's own output goes: the file handed to the child as its stdout/stderr, which
    * the runner keeps appending to across a daemon handoff (#2681). A session adopted from an older
@@ -93,6 +116,9 @@ export type RunnerSession = {
    * it (#2681). Lives only on the session so it dies with invalidation and restart.
    */
   commandCharges: RunnerCommandAccounting;
+  launchIdentity: RunnerLaunchIdentity;
+  ownedEnvironmentFiles: readonly string[];
+  listenerReadiness: RunnerListenerReadiness;
   // Records the last allowlisted mutating interaction that the runner confirmed
   // healthy (parsed ok, non-runnerFatal) for a given app bundle. Lives only on
   // the session object so it dies with every invalidation/restart (#702).
@@ -123,6 +149,7 @@ export type RunnerSession = {
   startupDeviceStates?: IosRunnerDeviceStates;
   logicalLeaseContext?: RunnerLogicalLeaseContext;
   lease?: RunnerLease;
+  recordingPin?: RunnerRecordingPin;
 };
 
 // A session goes forward through the lifecycle once: a state already reached is never re-entered,
@@ -342,6 +369,10 @@ export function resolveRunnerSessionLiveness(
   if (!session.processRunning) return 'gone';
   return session.state;
 }
+export type RunnerExecutionReceipt = Readonly<{
+  runnerSessionId: string;
+  launchIdentity: RunnerLaunchIdentity;
+}>;
 
 export function buildRunnerSessionId(deviceId: string, port: number): string {
   return `${deviceId}:${port}:${Date.now()}`;
@@ -351,4 +382,26 @@ export function normalizeRunnerStartupTimeoutMs(value: number | undefined): numb
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : undefined;
+}
+
+export function runnerSessionPinned(session: RunnerSession): AppError {
+  return new AppError(
+    'COMMAND_FAILED',
+    'The iOS runner session is pinned until its recording is finalized or explicitly abandoned',
+    {
+      reason: 'runner_session_pinned',
+      sessionId: session.sessionId,
+      recordingState: session.recordingPin?.state,
+    },
+  );
+}
+
+export function sameRunnerLaunchIdentity(
+  left: RunnerLaunchIdentity,
+  right: RunnerLaunchIdentity,
+): boolean {
+  return (
+    left.selectorFingerprint === right.selectorFingerprint &&
+    left.testHostContainerBundleId === right.testHostContainerBundleId
+  );
 }

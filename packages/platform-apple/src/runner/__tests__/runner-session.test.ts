@@ -1,12 +1,5 @@
-import type { RequestProgressEvent } from '@agent-device/contracts/progress';
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { beforeEach, test, vi } from 'vitest';
-import { IOS_DEVICE, IOS_SIMULATOR } from './device-fixtures.ts';
-import { appleRunnerTestHost } from '../test-host.ts';
-import { AppError } from '@agent-device/kernel/errors';
 import {
+  stubRunnerDeviceReadiness,
   makeClassifyOwnerLivenessViaMocks,
   assertRunnerCommand,
   captureDiagnostics,
@@ -18,6 +11,15 @@ import {
   RUNNER_CACHE_METADATA_FIXTURE,
   RUNNER_CACHE_KEY_FIXTURE,
 } from './runner-session-fixtures.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
+import type { RequestProgressEvent } from '@agent-device/contracts/progress';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { beforeEach, test, vi } from 'vitest';
+import { IOS_DEVICE, IOS_SIMULATOR } from './device-fixtures.ts';
+import { appleRunnerTestHost } from '../test-host.ts';
+import { AppError } from '@agent-device/kernel/errors';
 import { mkdtempForTestSync } from './tmp-dir.ts';
 
 const {
@@ -111,6 +113,28 @@ vi.mock('../runner-xctestrun.ts', async () => {
     ensureXctestrunArtifact: mockEnsureXctestrunArtifact,
     prepareXctestrunWithEnv: mockPrepareXctestrunWithEnv,
     resolveExpectedRunnerCacheMetadata: mockResolveExpectedRunnerCacheMetadata,
+    resolveRunnerLaunchSelection: async (
+      device: unknown,
+      options: Record<string, unknown>,
+      budget: unknown,
+    ) => {
+      const cache = mockResolveExpectedRunnerCacheMetadata(device, undefined, budget);
+      const derived = mockResolveRunnerDerivedPath(device, cache);
+      return {
+        source: options.iosXctestrunFile ? 'external' : 'internal',
+        identity: {
+          selectorFingerprint: JSON.stringify([
+            derived,
+            cache,
+            options.iosXctestrunFile,
+            options.iosXctestEnvDir,
+          ]),
+          testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+        },
+        derived,
+        expectedCacheMetadata: cache,
+      };
+    },
     resolveRunnerDerivedPath: mockResolveRunnerDerivedPath,
   };
 });
@@ -146,6 +170,7 @@ function setRunnerLeaseOwnerStateDir(stateDir: string | undefined): void {
 }
 
 beforeEach(async () => {
+  stubRunnerDeviceReadiness();
   // Must run before abortAllIosRunnerSessions() below: that call can tear
   // down sessions left in memory by the PREVIOUS test, and its cleanup path
   // signals real processes (host.signalPidsBestEffort et al.) unless the
@@ -175,6 +200,8 @@ beforeEach(async () => {
   );
   mockRunXcrun.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/base-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,
@@ -258,7 +285,7 @@ test('runner session invalidates after XCTest recorded mutation failures', async
         30_000,
       ),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.code, 'XCTEST_RECORDED_FAILURE');
       assert.match(error.message, /may not have been performed/);
       return true;
@@ -326,6 +353,8 @@ test('runner session emits XCTest startup progress only after a runner rebuild',
   await abortAllIosRunnerSessions();
   vi.clearAllMocks();
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/cached-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,
@@ -380,7 +409,7 @@ test('runner session fails early for physical iOS devices when Apple developer m
   await assert.rejects(
     () => ensureRunnerSession(device, {}),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.code, 'COMMAND_FAILED');
       assert.match(error.message, /Developer mode is disabled/);
       assert.match(String(error.details?.hint ?? ''), /DevToolsSecurity -enable/);
@@ -997,12 +1026,17 @@ test('runner lease cleanup reclaims only leases owned by the stopped daemon', as
   assert.ok(leaseDir);
   assert.equal(fs.existsSync(path.join(leaseDir, `${owned.deviceId}.json`)), false);
   assert.equal(fs.existsSync(path.join(leaseDir, `${foreign.deviceId}.json`)), true);
-  assert.deepEqual(mockCleanupTempFile.mock.calls, [[owned.xctestrunPath], [owned.jsonPath]]);
+  assert.deepEqual(mockCleanupTempFile.mock.calls, [
+    [owned.xctestrunPath],
+    [owned.ownedEnvironmentFiles[1]],
+  ]);
 });
 
-test('runner session reuses external xctestrun artifact without cache-derived comparison', async () => {
+test('runner session replaces an external runner when the requested selection changes', async () => {
   const device = { ...IOS_SIMULATOR, id: 'runner-session-external-artifact-sim' };
   mockEnsureXctestrunArtifact.mockResolvedValueOnce({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/aws/AgentDeviceRunner.xctestrun',
     derived: '/tmp/aws-derived',
     cache: 'external',
@@ -1015,9 +1049,9 @@ test('runner session reuses external xctestrun artifact without cache-derived co
   mockResolveRunnerDerivedPath.mockReturnValue('/tmp/internal-cache-derived');
   const reused = await ensureRunnerSession(device, {});
 
-  assert.equal(reused, session);
-  assert.equal(mockRunCmdBackground.mock.calls.length, 1);
-  assert.equal(mockEnsureXctestrunArtifact.mock.calls.length, 1);
+  assert.notEqual(reused, session);
+  assert.equal(mockRunCmdBackground.mock.calls.length, 2);
+  assert.equal(mockEnsureXctestrunArtifact.mock.calls.length, 2);
 });
 
 test('runner session restarts dead runner without graceful shutdown', async () => {
@@ -1414,7 +1448,7 @@ test('runner session clears recency and marks the error when a skipped-preflight
         30_000,
       ),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.details?.runnerReadinessPreflightSkipped, true);
       assert.equal(error.details?.runnerReadinessPreflightSkipReason, 'recent_healthy_mutation');
       assert.equal(typeof error.details?.runnerReadinessPreflightSkippedAgeMs, 'number');
@@ -1449,7 +1483,7 @@ test('runner session does not mark structured runner failures after a skip as sk
         30_000,
       ),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.message, 'Runner failed after receiving command');
       assert.notEqual(error.details?.runnerReadinessPreflightSkipped, true);
       return true;
@@ -1480,7 +1514,7 @@ test('runner session clears recency when an allowlisted command returns XCTest r
         30_000,
       ),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.code, 'XCTEST_RECORDED_FAILURE');
       return true;
     },
@@ -1513,7 +1547,7 @@ test('runner session invalidates when the runner reports abandoned main-thread w
         30_000,
       ),
     (error: unknown) => {
-      assert.ok(error instanceof AppError);
+      assert.ok(error instanceof AppError, String(error));
       assert.equal(error.code, 'RUNNER_WEDGED');
       return true;
     },

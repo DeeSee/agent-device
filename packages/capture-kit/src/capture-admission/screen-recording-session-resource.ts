@@ -21,7 +21,10 @@ import type {
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
 import type { DurableCaptureFinishIntent } from './durable-capture-resource.ts';
 import type { ScreenRecordingAdmissionLedger } from './screen-recording-admission-ledger.ts';
-import { screenRecordingResourceStore } from './screen-recording-resource-store.ts';
+import {
+  screenRecordingResourceStore,
+  SCREEN_RECORDING_COMPLETION_METADATA_KEY,
+} from './screen-recording-resource-store.ts';
 import type { DurableCaptureSessionState } from './session-state-slice.ts';
 
 export const screenRecordingDurableResource = createDurableCaptureResource<
@@ -68,6 +71,7 @@ export function finishLiveScreenRecording(params: {
   sessionName: string;
   sessionStore: DurableCaptureSessionStore<DurableCaptureSessionState>;
   intent: DurableCaptureFinishIntent;
+  signal?: AbortSignal;
 }): Promise<ScreenRecordingCompletion> {
   return screenRecordingDurableResource.finishLive(params);
 }
@@ -77,7 +81,6 @@ export function finishLiveScreenRecording(params: {
  * object `record stop` returned, so a replay cannot lose a field on its way through the manifest;
  * `screen-recording-stop-recovery.ts` reads it back and serves it.
  */
-export const SCREEN_RECORDING_COMPLETION_METADATA_KEY = 'completion';
 
 export function encodeScreenRecordingCompletionMetadata(
   completion: ScreenRecordingCompletion,
@@ -106,6 +109,10 @@ export function encodeScreenRecordingCompletionMetadata(
       ...(completion.telemetryPath === undefined
         ? {}
         : { telemetryPath: completion.telemetryPath }),
+      ...(completion.cadence === undefined ? {} : { cadence: { ...completion.cadence } }),
+      ...(completion.supplemental === undefined
+        ? {}
+        : { supplemental: { ...completion.supplemental } }),
       ...(completion.warning === undefined ? {} : { warning: completion.warning }),
       ...(completion.overlayWarning === undefined
         ? {}
@@ -151,5 +158,7 @@ export function finishRecoveredScreenRecording(params: {
   >;
   deadlineMs?: number;
 }): Promise<ScreenRecordingCompletion> {
-  return screenRecordingDurableResource.finishRecovered(params);
+  return screenRecordingDurableResource.finishRecovered({
+    ...params,
+  });
 }

@@ -212,6 +212,7 @@ struct Command: Codable {
   let command: CommandType
   let commandId: String?
   let statusCommandId: String?
+  let recordingStartCommandId: String?
   let appBundleId: String?
   let text: String?
   let selectorKey: String?

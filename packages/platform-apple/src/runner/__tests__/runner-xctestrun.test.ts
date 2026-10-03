@@ -1,3 +1,4 @@
+import { writeXctestrunFixture, seedRunnerProductBundle } from './runner-xctestrun.fixtures.ts';
 import { test, vi, beforeEach } from 'vitest';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -12,7 +13,6 @@ import {
   buildRunnerSessionXctestrunSuffix,
 } from '../runner-artifact-env.ts';
 import { xcodebuildLogWithBuildArguments } from './runner-build-log.fixtures.ts';
-import { writeXctestrunFixture } from './runner-xctestrun.fixtures.ts';
 import { appleRunnerTestHost } from '../test-host.ts';
 import type { ExecOptions, ExecResult } from '@agent-device/host-kit/command';
 
@@ -672,7 +672,11 @@ test('ensureXctestrunArtifact uses configured external xctestrun artifact', asyn
     const xctestrunPath = path.join(root, 'aws', 'AgentDeviceRunner.xctestrun');
     const derivedPath = path.join(root, 'derived');
     fs.mkdirSync(path.dirname(xctestrunPath), { recursive: true });
-    fs.writeFileSync(xctestrunPath, '{}');
+    await seedRunnerProductBundle(path.join(path.dirname(xctestrunPath), 'Runner.app'));
+    writeXctestrunFixture(xctestrunPath, {
+      projectRoot: root,
+      productRelativePaths: ['Runner.app'],
+    });
 
     const artifact = await ensureXctestrunArtifact(iosDevice, {
       forceRunnerXctestrunRebuild: true,
@@ -693,7 +697,11 @@ test('ensureXctestrunArtifact defaults external derived data to writable temp pa
   await withTempDir('runner-xctestrun-external-temp-', async (root) => {
     const xctestrunPath = path.join(root, 'aws', 'AgentDeviceRunner.xctestrun');
     fs.mkdirSync(path.dirname(xctestrunPath), { recursive: true });
-    fs.writeFileSync(xctestrunPath, '{}');
+    await seedRunnerProductBundle(path.join(path.dirname(xctestrunPath), 'Runner.app'));
+    writeXctestrunFixture(xctestrunPath, {
+      projectRoot: root,
+      productRelativePaths: ['Runner.app'],
+    });
 
     const artifact = await ensureXctestrunArtifact(iosDevice, {
       iosXctestrunFile: xctestrunPath,

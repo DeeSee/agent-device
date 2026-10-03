@@ -1,3 +1,7 @@
+import {
+  RUNNER_LAUNCH_IDENTITY_FIXTURE,
+  makeRunnerLaunchSelection,
+} from './runner-identity-fixtures.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -130,13 +134,19 @@ afterEach(() => {
 function writeDetachedLease(device: DeviceInfo): void {
   const lease: RunnerLease = {
     ...buildRunnerLease({
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+      artifactSource: 'internal',
+
       device,
       sessionId: `${device.id}:${RUNNER_PORT}:1`,
       runnerPid: RUNNER_PID,
       port: RUNNER_PORT,
       cacheKey: RUNNER_CACHE_KEY_FIXTURE,
       xctestrunPath: path.join(expectedDerived, 'Build', 'Products', 'env.session.xctestrun'),
-      jsonPath: path.join(expectedDerived, 'Build', 'Products', 'env.session.json'),
+      ownedEnvironmentFiles: [
+        path.join(expectedDerived, 'Build', 'Products', 'env.session.xctestrun'),
+        path.join(expectedDerived, 'Build', 'Products', 'env.session.json'),
+      ],
     }),
     ownerToken: 'detached-owner-99999-deadbeef',
     ownerPid: 99999,
@@ -149,7 +159,9 @@ test('the adoption probe dials usbmux for a cabled CoreDevice device, never loop
   writeDetachedLease(cabledDevice);
   mockUsbmuxPostCommand.mockResolvedValue(runnerResponse({ uptimeMs: 1 }));
 
-  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {});
+  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session).not.toBeNull();
   expect(mockUsbmuxPostCommand.mock.calls.map(([deviceId, port]) => `${deviceId}:${port}`)).toEqual(
@@ -168,7 +180,9 @@ test('a Wi-Fi CoreDevice device is probed at its tunnel address, not at 127.0.0.
   tunnelIp = 'fd18::42';
   mockUsbmuxPostCommand.mockRejectedValue(usbmuxDeviceUnattachedError());
 
-  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {});
+  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session).not.toBeNull();
   expect(fetchUrls[0]).toBe(`http://[${tunnelIp}]:${RUNNER_PORT}/command`);
@@ -178,7 +192,9 @@ test('a lease from a daemon that left no log path still adopts, and the new leas
   writeDetachedLease(cabledDevice);
   mockUsbmuxPostCommand.mockResolvedValue(runnerResponse({ uptimeMs: 1 }));
 
-  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {});
+  const session = await tryAdoptRunnerSessionFromLease(cabledDevice, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session?.runnerLogPath).toBeUndefined();
   expect(fs.existsSync(path.join(leaseDir, `${cabledDevice.id}.json`))).toBe(true);
@@ -198,6 +214,7 @@ test('a launched physical probe that runs past its deadline refuses adoption as 
 
   expect(
     await tryAdoptRunnerSessionFromLease(cabledDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
       budget: createRunnerPhaseBudget(250, undefined),
     }),
   ).toBeNull();

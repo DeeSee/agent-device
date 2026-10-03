@@ -1,3 +1,10 @@
+import {
+  stubRunnerDeviceReadiness,
+  captureDiagnostics,
+  RUNNER_CACHE_METADATA_FIXTURE,
+  RUNNER_CACHE_KEY_FIXTURE,
+} from './runner-session-fixtures.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -64,6 +71,28 @@ vi.mock('../runner-xctestrun.ts', async () => {
     ensureXctestrunArtifact: mockEnsureXctestrunArtifact,
     prepareXctestrunWithEnv: mockPrepareXctestrunWithEnv,
     resolveExpectedRunnerCacheMetadata: mockResolveExpectedRunnerCacheMetadata,
+    resolveRunnerLaunchSelection: async (
+      device: unknown,
+      options: Record<string, unknown>,
+      budget: unknown,
+    ) => {
+      const cache = mockResolveExpectedRunnerCacheMetadata(device, undefined, budget);
+      const derived = mockResolveRunnerDerivedPath(device, cache);
+      return {
+        source: options.iosXctestrunFile ? 'external' : 'internal',
+        identity: {
+          selectorFingerprint: JSON.stringify([
+            derived,
+            cache,
+            options.iosXctestrunFile,
+            options.iosXctestEnvDir,
+          ]),
+          testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+        },
+        derived,
+        expectedCacheMetadata: cache,
+      };
+    },
     resolveRunnerDerivedPath: mockResolveRunnerDerivedPath,
   };
 });
@@ -78,11 +107,6 @@ import { DEFAULT_RUNNER_START_BUDGET_MS } from '../runner-start-budget.ts';
 import { RUNNER_STARTUP_TIMEOUT_MS } from '../runner-startup-transport.ts';
 import type { RunnerLease } from '../runner-lease.ts';
 import { executeRunnerCommand, prepareLocalIosRunner } from '../runner-lifecycle.ts';
-import {
-  captureDiagnostics,
-  RUNNER_CACHE_METADATA_FIXTURE,
-  RUNNER_CACHE_KEY_FIXTURE,
-} from './runner-session-fixtures.ts';
 
 const SNAPSHOT = { command: 'snapshot', appBundleId: 'com.example.demo' } as const;
 
@@ -132,6 +156,7 @@ function getRequestSignal(requestId: string | undefined): AbortSignal | undefine
 }
 
 beforeEach(async () => {
+  stubRunnerDeviceReadiness();
   // Installed before the leading `abortAllIosRunnerSessions()` cleanup below:
   // that cleanup can dispose a session a PRIOR test deliberately left running
   // (e.g. the survivor in the previous test), so the host overrides must
@@ -160,6 +185,8 @@ beforeEach(async () => {
   );
   mockRunXcrun.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/base-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,
@@ -314,6 +341,8 @@ test('a caller deadline during the xctestrun build leaves on time and the next r
     controller.abort(callerDeadline());
     await buildReleased;
     return {
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
       xctestrunPath: '/tmp/base-runner.xctestrun',
       derived: '/tmp/derived',
       cacheKey: RUNNER_CACHE_KEY_FIXTURE,

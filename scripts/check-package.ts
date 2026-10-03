@@ -59,7 +59,11 @@ const consumerDir = path.join(workDir, 'consumer');
 function run(command: string, args: string[], cwd: string): string {
   return execFileSync(command, args, {
     cwd,
-    env: { ...process.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
+    env: {
+      ...process.env,
+      AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
+      AGENT_DEVICE_CLAIMS_DIR: path.join(workDir, 'device-claims'),
+    },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'inherit'],

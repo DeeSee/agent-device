@@ -60,6 +60,8 @@ import { readApplePlistJson, runAppleToolCommand, runXcrun } from './tool-provid
  * making a name shared by two of them silently rebind a capability.
  */
 export const appleRunnerHost: AppleRunnerHost = {
+  walkProducerCodeGraph: async (...args) =>
+    (await import('@agent-device/host-kit/code-signature')).walkDaemonCodeGraph(...args),
   runCmdStreaming,
   runCmdSync,
   runCmdBackground,

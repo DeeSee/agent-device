@@ -23,6 +23,7 @@ export type ScreenRecordingLiveHandleImplementation = Readonly<{
   finish(
     snapshot: ScreenRecordingLiveSnapshot,
     progress?: DurableCaptureProgress,
+    signal?: AbortSignal,
   ): Promise<FinishOutcome<ScreenRecordingCompletion>>;
   forceCleanup(snapshot: ScreenRecordingLiveSnapshot): Promise<CleanupOutcome>;
 }>;
@@ -39,11 +40,11 @@ export function createScreenRecordingLiveHandle(
   let disposal: Promise<void> | undefined;
   // Once a finish or a cleanup has been asked for, the recording no longer accepts telemetry.
   const terminal = (): boolean => finishRequested || cleanup !== undefined;
-  const finishRecording = (progress?: DurableCaptureProgress) => {
+  const finishRecording = (progress?: DurableCaptureProgress, signal?: AbortSignal) => {
     // Only a finished recording stays memoized. A finish the host refused has to be re-driven
     // by the next `record stop`, which is how a recording recovers without a daemon restart.
     finishRequested = true;
-    finish ??= implementation.finish(snapshot, progress).catch((error: unknown) => {
+    finish ??= implementation.finish(snapshot, progress, signal).catch((error: unknown) => {
       finish = undefined;
       throw error;
     });

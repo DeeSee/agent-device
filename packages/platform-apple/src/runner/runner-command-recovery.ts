@@ -70,6 +70,7 @@ export async function handleRunnerTransportErrorAfterCommandSend(params: {
   signal: AbortSignal | undefined;
   invalidationReason: string;
   invalidateSession: (session: RunnerSession, reason: string) => Promise<void>;
+  queryStatus?: () => Promise<Record<string, unknown>>;
 }): Promise<Record<string, unknown>> {
   const { device, session, command, transportError, options, signal, invalidationReason } = params;
   const recovery = await tryRecoverRunnerCommandAfterTransportError(
@@ -79,6 +80,7 @@ export async function handleRunnerTransportErrorAfterCommandSend(params: {
     transportError,
     options,
     signal,
+    params.queryStatus,
   );
   return await applyRunnerTransportRecovery(recovery, {
     command,
@@ -205,6 +207,7 @@ async function tryRecoverRunnerCommandAfterTransportError(
   transportError: AppError,
   options: AppleRunnerCommandOptions,
   signal?: AbortSignal,
+  queryStatus?: () => Promise<Record<string, unknown>>,
 ): Promise<RunnerTransportRecovery> {
   if (command.command === 'status' || !command.commandId?.trim()) {
     return {
@@ -220,14 +223,16 @@ async function tryRecoverRunnerCommandAfterTransportError(
   const readinessPreflight = readReadinessPreflightRecoveryDetails(transportError);
   let status: Record<string, unknown>;
   try {
-    status = await executeRunnerCommandWithSession(
-      device,
-      session,
-      { command: 'status', statusCommandId: command.commandId },
-      options.logPath,
-      RUNNER_STATUS_RECOVERY_TIMEOUT_MS,
-      signal,
-    );
+    status = queryStatus
+      ? await queryStatus()
+      : await executeRunnerCommandWithSession(
+          device,
+          session,
+          { command: 'status', statusCommandId: command.commandId },
+          options.logPath,
+          RUNNER_STATUS_RECOVERY_TIMEOUT_MS,
+          signal,
+        );
   } catch (error) {
     emitDiagnostic({
       level: 'debug',
@@ -429,6 +434,7 @@ function runnerStatusFailureError(
       lifecycleState: 'failed',
       recovery: 'runner_reported_failure',
       ...classification.details,
+      runnerCommandOutcome: 'rejected',
       ...readinessPreflight,
       hint: hint ?? runnerReportedFailureHint(command.command, readinessPreflight),
       logPath: options.logPath,

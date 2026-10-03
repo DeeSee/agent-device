@@ -226,7 +226,7 @@ export const SYSTEM_COMMAND_OUTPUT_SCHEMAS = {
 const appStateCommandDescription =
   'Show foreground app/activity (Android; iOS answers per command)';
 const backCommandDescription =
-  'Navigate back in the app or through system navigation. Use in-app for the app navigation stack and system when the platform back behavior is required.';
+  'Navigate back in the app or through system navigation. Use in-app for the app navigation stack and system when the platform back behavior is required. On iOS and iPadOS, in-app mode activates an exposed Back, Close, or Cancel navigation control, a sole system Done navigation control, or a semantically identified sheet-dismiss control, and fails when none is available.';
 const homeCommandDescription =
   'Send the selected device to its home screen. This leaves the app session open but moves the foreground away from the app.';
 const orientationCommandDescription = 'Set device orientation on iOS and Android';

@@ -9,3 +9,5 @@ export async function resolveAndroidArchivePackageName(
   const { resolveAndroidArchivePackageName: resolve } = await loadAndroidMechanics();
   return await resolve(...args);
 }
+
+export * from '@agent-device/platform-apple/runner-artifacts';

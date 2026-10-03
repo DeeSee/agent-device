@@ -30,6 +30,11 @@ test('Provider-backed integration prepare uses the Apple runner lifecycle provid
       lifecycleCalls.push(`prepare:${device.platform}:${device.target ?? 'unknown'}`);
       return {
         runner: { uptimeMs: 123 },
+        runnerSessionId: 'provider-prepare-session',
+        launchIdentity: {
+          selectorFingerprint: 'provider-prepare-selector',
+          testHostContainerBundleId: 'com.example.provider.runner',
+        },
         connectMs: 7,
         healthCheckMs: 11,
       };

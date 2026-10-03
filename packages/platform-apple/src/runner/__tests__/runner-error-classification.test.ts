@@ -363,3 +363,12 @@ test('only the typed RUNNER_BUSY refusal reads as busy', () => {
   assert.equal(isRunnerBusyError(commandFailed('RUNNER_BUSY')), false);
   assert.equal(isRunnerBusyError(new Error('RUNNER_BUSY')), false);
 });
+
+test('an authenticated listener bind collision restarts with a new session overlay', () => {
+  const collision = commandFailed('Runner listener port is already in use', {
+    reason: 'runner_listener_address_in_use',
+    dispatched: 'no',
+  });
+  assert.equal(isRetryableRunnerError(collision), true);
+  assert.equal(shouldRestartRunnerBeforeCommandSend(collision, TAP), true);
+});

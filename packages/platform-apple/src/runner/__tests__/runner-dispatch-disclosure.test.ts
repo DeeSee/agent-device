@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { afterEach, test, vi } from 'vitest';
@@ -42,12 +44,15 @@ afterEach(async () => {
 
 function runnerSession(port: number): RunnerSession {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: `fake:${port}`,
     device: IOS_SIMULATOR,
     deviceId: IOS_SIMULATOR.id,
     port,
     xctestrunPath: '/tmp/fake.xctestrun',
-    jsonPath: '/tmp/fake.json',
+    ownedEnvironmentFiles: ['/tmp/fake.xctestrun', '/tmp/fake.json'],
     testPromise: new Promise<ExecResult>(() => {}),
     child: { pid: process.pid, exitCode: null },
     state: 'ready',

@@ -1,3 +1,4 @@
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, test, vi } from 'vitest';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
@@ -94,6 +95,28 @@ vi.mock('../runner-xctestrun.ts', async () => {
     ensureXctestrunArtifact: mockEnsureXctestrunArtifact,
     prepareXctestrunWithEnv: mockPrepareXctestrunWithEnv,
     resolveExpectedRunnerCacheMetadata: mockResolveExpectedRunnerCacheMetadata,
+    resolveRunnerLaunchSelection: async (
+      device: unknown,
+      options: Record<string, unknown>,
+      budget: unknown,
+    ) => {
+      const cache = mockResolveExpectedRunnerCacheMetadata(device, undefined, budget);
+      const derived = mockResolveRunnerDerivedPath(device, cache);
+      return {
+        source: options.iosXctestrunFile ? 'external' : 'internal',
+        identity: {
+          selectorFingerprint: JSON.stringify([
+            derived,
+            cache,
+            options.iosXctestrunFile,
+            options.iosXctestEnvDir,
+          ]),
+          testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+        },
+        derived,
+        expectedCacheMetadata: cache,
+      };
+    },
     resolveRunnerDerivedPath: mockResolveRunnerDerivedPath,
   };
 });
@@ -135,6 +158,8 @@ beforeEach(async () => {
   );
   mockRunXcrun.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/base-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,

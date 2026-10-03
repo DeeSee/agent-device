@@ -138,6 +138,40 @@ test('DEVICE_IN_USE errors are flagged retriable; supportedOn stays absent', asy
   expect('supportedOn' in response.error).toBe(false);
 });
 
+test('request diagnostics persist the normalized process-exit message for later diagnosis', async () => {
+  const { sessionStore, handler } = makeHandler();
+  sessionStore.set('typed-error', makeIosSession('typed-error'));
+  systemRuntimeSpies.appSwitcher.mockRejectedValue(
+    new AppError('COMMAND_FAILED', 'Apple app install failed', {
+      processExitError: true,
+      stdout: '',
+      stderr:
+        'An error was encountered processing the command\nThe application is missing its signature.\n',
+      exitCode: 13,
+    }),
+  );
+
+  const response = await handler(
+    request('app-switcher', { meta: { requestId: 'diagnosable-process-exit' } }),
+  );
+
+  expect(response.ok).toBe(false);
+  if (response.ok) return;
+  expect(response.error.message).toBe(
+    'Apple app install failed: The application is missing its signature.',
+  );
+  expect(response.error.logPath).toBeDefined();
+  const events = fs
+    .readFileSync(response.error.logPath!, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { phase: string; data?: Record<string, unknown> });
+  expect(events.find((event) => event.phase === 'request_failed')?.data).toMatchObject({
+    code: 'COMMAND_FAILED',
+    message: 'Apple app install failed: The application is missing its signature.',
+  });
+});
+
 test('deterministic errors (INVALID_ARGS) are returned with the default shape — no typed-error fields', async () => {
   const { sessionStore, handler } = makeHandler();
   sessionStore.set('typed-error', makeIosSession('typed-error'));

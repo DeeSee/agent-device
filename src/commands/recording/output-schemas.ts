@@ -23,6 +23,67 @@ const artifactSchema = objectSchema(
   ['field'],
 );
 
+const recordingCadenceSchema: JsonSchema = {
+  oneOf: [
+    objectSchema(
+      {
+        status: constSchema('measured'),
+        source: constSchema('media-pts'),
+        requestedFps: numberSchema(),
+        sampleCount: numberSchema(),
+        mediaDurationMs: numberSchema(),
+        firstPtsMs: numberSchema(),
+        lastPtsMs: numberSchema(),
+        maxInterSampleGapMs: numberSchema(),
+        effectiveFps: numberSchema(),
+      },
+      ['status', 'source', 'sampleCount', 'mediaDurationMs'],
+    ),
+    objectSchema(
+      {
+        status: constSchema('unavailable'),
+        source: constSchema('media-pts'),
+        requestedFps: numberSchema(),
+        reason: enumSchema(['unsupported-container', 'validator-unavailable']),
+      },
+      ['status', 'source', 'reason'],
+    ),
+    objectSchema(
+      {
+        status: constSchema('invalid'),
+        source: constSchema('media-pts'),
+        requestedFps: numberSchema(),
+        reason: enumSchema([
+          'container-invalid',
+          'unplayable-or-duration-invalid',
+          'missing-video-track',
+          'missing-video-samples',
+          'sample-timing-invalid',
+          'reader-failed',
+          'probe-failed',
+        ]),
+      },
+      ['status', 'source', 'reason'],
+    ),
+  ],
+};
+
+const recordingSupplementalSchema = objectSchema(
+  {
+    mediaInspection: enumSchema(['measured', 'invalid', 'unavailable']),
+    telemetry: enumSchema(['written', 'unavailable']),
+  },
+  ['mediaInspection', 'telemetry'],
+);
+
+const recordingArtifactPublicationSchema = objectSchema(
+  {
+    status: constSchema('unavailable'),
+    reason: constSchema('adapter-failed'),
+  },
+  ['status', 'reason'],
+);
+
 /**
  * This family's advertised MCP `outputSchema`s, keyed by daemon command name and projected into
  * the command map by `src/mcp/command-output-schemas.ts`. Non-strict like every other entry: no
@@ -71,6 +132,9 @@ export const RECORDING_COMMAND_OUTPUT_SCHEMAS = {
           showTouches: booleanSchema(),
           warning: stringSchema(),
           overlayWarning: stringSchema(),
+          cadence: recordingCadenceSchema,
+          supplemental: recordingSupplementalSchema,
+          artifactPublication: recordingArtifactPublicationSchema,
           chunks: { type: 'array', items: looseObjectSchema() },
         },
         ['recording', 'outPath', 'artifacts', 'durationMs', 'showTouches'],

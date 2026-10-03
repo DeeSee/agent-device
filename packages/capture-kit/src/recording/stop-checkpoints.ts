@@ -1,3 +1,8 @@
+import type {
+  ScreenRecordingCadence,
+  RecordingSupplementalStatus,
+} from '@agent-device/contracts/recording';
+type VideoInspection = ScreenRecordingCadence;
 import type { JsonObject, JsonValue } from '@agent-device/contracts/client';
 import { isNativePathDisposition } from '@agent-device/contracts/recording-native-path';
 import type {
@@ -46,6 +51,16 @@ const FINALIZATION_FIELDS: {
   >;
 } = {
   telemetryPath: optionalString(),
+  cadence: {
+    encode: (value) => ({ ...value }),
+    read: (value) =>
+      value === undefined ? undefined : (readScreenRecordingCadence(value) ?? UNREADABLE),
+  },
+  supplemental: {
+    encode: (value) => ({ ...value }),
+    read: (value) =>
+      value === undefined ? undefined : (readRecordingSupplementalStatus(value) ?? UNREADABLE),
+  },
   warning: optionalString(),
   overlayWarning: optionalString(),
   nativePathDisposition: {
@@ -172,4 +187,131 @@ function isNonNegativeNumber(value: unknown): value is number {
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+export function readVideoInspection(value: unknown): VideoInspection | undefined {
+  if (!isRecord(value) || value.source !== 'media-pts') return undefined;
+  if (value.status === 'unavailable')
+    return value.reason === 'unsupported-container' || value.reason === 'validator-unavailable'
+      ? unavailableInspection(value.reason)
+      : undefined;
+  if (value.status === 'invalid') {
+    return value.reason === 'container-invalid' ||
+      value.reason === 'unplayable-or-duration-invalid' ||
+      value.reason === 'missing-video-track' ||
+      value.reason === 'missing-video-samples' ||
+      value.reason === 'sample-timing-invalid' ||
+      value.reason === 'reader-failed' ||
+      value.reason === 'probe-failed'
+      ? invalidInspection(value.reason)
+      : undefined;
+  }
+  if (value.status !== 'measured') return undefined;
+  if (!isNonNegativeInteger(value.sampleCount) || !isNonNegativeFinite(value.mediaDurationMs)) {
+    return undefined;
+  }
+  const firstPtsMs = optionalFiniteNumber(value.firstPtsMs);
+  const lastPtsMs = optionalFiniteNumber(value.lastPtsMs);
+  const maxInterSampleGapMs = optionalNonNegativeFinite(value.maxInterSampleGapMs);
+  const effectiveFps = optionalNonNegativeFinite(value.effectiveFps);
+  if (
+    firstPtsMs === false ||
+    lastPtsMs === false ||
+    maxInterSampleGapMs === false ||
+    effectiveFps === false
+  ) {
+    return undefined;
+  }
+  if (value.sampleCount === 0 && (firstPtsMs !== undefined || lastPtsMs !== undefined)) {
+    return undefined;
+  }
+  if (value.sampleCount > 0 && (firstPtsMs === undefined || lastPtsMs === undefined)) {
+    return undefined;
+  }
+  if (value.sampleCount >= 2) {
+    if (
+      firstPtsMs === undefined ||
+      lastPtsMs === undefined ||
+      lastPtsMs <= firstPtsMs ||
+      maxInterSampleGapMs === undefined ||
+      effectiveFps === undefined
+    ) {
+      return undefined;
+    }
+  }
+  return Object.freeze({
+    status: 'measured',
+    source: 'media-pts',
+    sampleCount: value.sampleCount,
+    mediaDurationMs: value.mediaDurationMs,
+    ...(firstPtsMs === undefined ? {} : { firstPtsMs }),
+    ...(lastPtsMs === undefined ? {} : { lastPtsMs }),
+    ...(maxInterSampleGapMs === undefined ? {} : { maxInterSampleGapMs }),
+    ...(effectiveFps === undefined ? {} : { effectiveFps }),
+  });
+}
+
+export function invalidInspection(
+  reason: Extract<VideoInspection, { status: 'invalid' }>['reason'],
+): VideoInspection {
+  return Object.freeze({ status: 'invalid', source: 'media-pts', reason });
+}
+
+export function unavailableInspection(
+  reason: Extract<VideoInspection, { status: 'unavailable' }>['reason'],
+): VideoInspection {
+  return Object.freeze({ status: 'unavailable', source: 'media-pts', reason });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === 'number' && value >= 0;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function optionalFiniteNumber(value: unknown): number | undefined | false {
+  if (value === undefined) return undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? value : false;
+}
+
+function optionalNonNegativeFinite(value: unknown): number | undefined | false {
+  if (value === undefined) return undefined;
+  return isNonNegativeFinite(value) ? value : false;
+}
+
+export function readScreenRecordingCadence(value: unknown): ScreenRecordingCadence | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    value.requestedFps !== undefined &&
+    (typeof value.requestedFps !== 'number' ||
+      !Number.isFinite(value.requestedFps) ||
+      value.requestedFps <= 0)
+  )
+    return undefined;
+  const inspected = readVideoInspection(value);
+  return inspected === undefined
+    ? undefined
+    : {
+        ...inspected,
+        ...(value.requestedFps === undefined ? {} : { requestedFps: value.requestedFps }),
+      };
+}
+export function readRecordingSupplementalStatus(
+  value: unknown,
+): RecordingSupplementalStatus | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    (value.mediaInspection !== 'measured' &&
+      value.mediaInspection !== 'invalid' &&
+      value.mediaInspection !== 'unavailable') ||
+    (value.telemetry !== 'written' && value.telemetry !== 'unavailable')
+  )
+    return undefined;
+  return { mediaInspection: value.mediaInspection, telemetry: value.telemetry };
 }

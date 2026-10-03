@@ -1,3 +1,4 @@
+import type * as HostCodeSignature from '@agent-device/host-kit/code-signature';
 import type * as HostCommand from '@agent-device/host-kit/command';
 import type * as HostDiagnostics from '@agent-device/host-kit/diagnostics';
 import type * as HostFile from '@agent-device/host-kit/file';
@@ -84,6 +85,10 @@ export type AppleRunnerHost = Pick<
   Pick<typeof AppleToolProvider, 'runAppleToolCommand' | 'runXcrun' | 'readApplePlistJson'> &
   Pick<typeof AppleSimctl, 'buildSimctlArgsForDevice' | 'simulatorAddressFor'> &
   Pick<typeof ApplePlistXml, 'visitXmlPlistEntries'> & {
+    /** Reads the workspace-aware module graph without loading its walker during runner import. */
+    walkProducerCodeGraph: (
+      ...args: Parameters<typeof HostCodeSignature.walkDaemonCodeGraph>
+    ) => Promise<ReturnType<typeof HostCodeSignature.walkDaemonCodeGraph>>;
     /**
      * The `Deadline` constructor is a class static, so the port carries the factory alone, typed
      * to the read side: a test host substitutes its own clock.
@@ -199,3 +204,5 @@ export const hasDeviceClaimAuthority = delegate('hasDeviceClaimAuthority');
 export const Deadline = {
   fromTimeoutMs: delegate('deadlineFromTimeoutMs'),
 };
+
+export const walkProducerCodeGraph = delegate('walkProducerCodeGraph');

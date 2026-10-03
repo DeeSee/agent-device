@@ -26,6 +26,10 @@ type RuntimeOptions = {
   finishError?: Error;
   cleanup?: CleanupOutcome;
   screenRecordingStartFact?: RuntimeOperationUnavailability;
+  recoverableStartFailure?: {
+    reason: 'runner_recording_start_uncertain';
+    message: string;
+  };
 };
 
 export function makeRecordRuntimeHarness(
@@ -71,7 +75,11 @@ export function makeRecordRuntimeHarness(
     sessionName,
     sessionStore,
     runtime,
-    run: (positionals: string[], meta?: DaemonRequest['meta']) =>
+    run: (
+      positionals: string[],
+      meta?: DaemonRequest['meta'],
+      options?: { cwd?: string; flags?: DaemonRequest['flags'] },
+    ) =>
       handleRecordCommand({
         ...common,
         req: {
@@ -79,8 +87,10 @@ export function makeRecordRuntimeHarness(
           session: sessionName,
           command: 'record',
           positionals,
-          flags: {},
-          ...(meta ? { meta } : {}),
+          flags: options?.flags ?? {},
+          ...(meta || options?.cwd
+            ? { meta: { ...meta, ...(options?.cwd ? { cwd: options.cwd } : {}) } }
+            : {}),
         },
       }),
   };
@@ -160,6 +170,9 @@ function makeRuntime(session: SessionState, options: RuntimeOptions = {}) {
           lifecycle: 'open',
           descriptor: { version: 1, body: { recordingId: 'id' } },
         }),
+        ...(options.recoverableStartFailure
+          ? { recoverableStartFailure: options.recoverableStartFailure }
+          : {}),
       };
     },
   );

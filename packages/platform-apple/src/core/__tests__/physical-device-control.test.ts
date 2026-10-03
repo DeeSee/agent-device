@@ -104,9 +104,22 @@ test('default interactor screenshots stay in-band without invoking devicectl', a
       }),
       async () =>
         await withAppleRunnerProvider(
-          async (_device, command) => {
-            assert.equal(command.inlineScreenshot, true);
-            return { imageBase64: Buffer.from('png-bytes').toString('base64') };
+          {
+            hasLiveSession: () => true,
+            runCommand: async () => ({}),
+            runCommandWithReceipt: async (_device, command) => {
+              assert.equal(command.inlineScreenshot, true);
+              return {
+                data: { imageBase64: Buffer.from('png-bytes').toString('base64') },
+                receipt: {
+                  runnerSessionId: 'screenshot-session',
+                  launchIdentity: {
+                    selectorFingerprint: 'screenshot-selector',
+                    testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+                  },
+                },
+              };
+            },
           },
           { deviceId: XCTEST_IOS_DEVICE.id },
           async () =>

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { LocalInstallSource } from '@agent-device/kernel/contracts';
 import { readIosBundleInfo } from './bundle-info.ts';
+import type { stageIosAppForInstaller } from './install-artifact-staging.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import { extractArchiveSafely, ArchiveBudget } from '@agent-device/host-kit/archive';
 
@@ -60,10 +61,14 @@ async function prepareIosInstallArtifactInScope(
   });
 
   let resolved: Awaited<ReturnType<typeof resolveIosInstallablePath>> | undefined;
+  let staged: Awaited<ReturnType<typeof stageIosAppForInstaller>> | undefined;
   try {
     resolved = await resolveIosInstallablePath(materialized.installablePath, options);
     const resolvedInstallable = resolved;
-    const bundleInfo = await readIosBundleInfo(resolvedInstallable.installPath, options?.signal);
+    const { stageIosAppForInstaller } = await import('./install-artifact-staging.ts');
+    staged = await stageIosAppForInstaller(resolvedInstallable.installPath);
+    const stagedInstallable = staged;
+    const bundleInfo = await readIosBundleInfo(stagedInstallable.installPath, options?.signal);
     const archivePath =
       materialized.archivePath ??
       (materialized.installablePath.toLowerCase().endsWith('.ipa')
@@ -72,19 +77,30 @@ async function prepareIosInstallArtifactInScope(
 
     return {
       archivePath,
-      installablePath: resolvedInstallable.installPath,
+      installablePath: stagedInstallable.installPath,
       bundleId: bundleInfo.bundleId,
       appName: bundleInfo.appName,
       cleanup: async () => {
-        await resolvedInstallable.cleanup();
-        await materialized.cleanup();
+        try {
+          await stagedInstallable.cleanup();
+        } finally {
+          try {
+            await resolvedInstallable.cleanup();
+          } finally {
+            await materialized.cleanup();
+          }
+        }
       },
     };
   } catch (error) {
     try {
-      await resolved?.cleanup();
+      await staged?.cleanup();
     } finally {
-      await materialized.cleanup();
+      try {
+        await resolved?.cleanup();
+      } finally {
+        await materialized.cleanup();
+      }
     }
     throw error;
   }

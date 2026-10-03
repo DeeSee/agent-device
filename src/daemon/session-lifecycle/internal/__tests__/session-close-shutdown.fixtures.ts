@@ -41,6 +41,10 @@ vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
     stopAndroidSnapshotHelperSessionForDevice: vi.fn(async () => {}),
   };
 });
+vi.mock('../../../device/device-claims.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../device/device-claims.ts')>();
+  return { ...actual, clearDeviceClaim: vi.fn(actual.clearDeviceClaim) };
+});
 vi.mock('@agent-device/capture-kit/recording-video', () => ({
   waitForStableFile: vi.fn(async () => {}),
   isPlayableVideo: vi.fn(async () => true),
@@ -69,7 +73,7 @@ import {
 } from '@agent-device/platform-apple/runner/operations';
 import { cleanupAppleXctracePerfCapture } from '@agent-device/platform-apple/perf';
 import { WEB_DESKTOP_DEVICE } from '../../../../__tests__/test-utils/device-fixtures.ts';
-import { acquireDeviceClaim } from '../../../device/device-claims.ts';
+import { acquireDeviceClaim, clearDeviceClaim } from '../../../device/device-claims.ts';
 import { inspectDeviceClaims } from '../../../device/device-claim-inspection.ts';
 
 import {
@@ -96,6 +100,7 @@ const mockStopAndroidSnapshotHelperSessionForDevice = vi.mocked(
   stopAndroidSnapshotHelperSessionForDevice,
 );
 const mockStopIosRunnerSession = vi.mocked(stopIosRunnerSession);
+const mockClearDeviceClaim = vi.mocked(clearDeviceClaim);
 const mockReleaseRunnerOnClose = vi.mocked(releaseIosRunnerOnClose);
 
 const teardownSessionResources = (
@@ -243,6 +248,7 @@ function resetSessionCloseShutdownMocks(): void {
  * re-export list through the hoisted transform.
  */
 export const sessionCloseShutdownFixture = Object.freeze({
+  mockClearDeviceClaim,
   acquireDeviceClaim,
   AppError,
   flushDiagnosticsToSessionFile,

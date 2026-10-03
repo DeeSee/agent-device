@@ -4,6 +4,8 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { Deadline } from './host.ts';
 import type { RunnerCommand } from './runner-contract.ts';
 import type { RunnerXctestrunArtifactState, RunnerXctestrunCacheKind } from './runner-xctestrun.ts';
+import type { RunnerExecutionReceipt } from './runner-session-types.ts';
+import type { RunnerLaunchIdentity } from './runner-launch-identity.ts';
 
 export type AppleRunnerCommandOptions = AppleRunnerRequestOptions & {
   signal?: AbortSignal;
@@ -14,6 +16,7 @@ export type AppleRunnerCommandOptions = AppleRunnerRequestOptions & {
    * cleanup must never start, adopt, or dispatch to a replacement session.
    */
   expectedRunnerSessionId?: string;
+  expectedRunnerLaunchIdentity?: RunnerLaunchIdentity;
 };
 
 export type AppleRunnerLifecycleOptions = AppleRunnerCommandOptions & {
@@ -35,6 +38,8 @@ export type AppleRunnerPrepareOptions = AppleRunnerLifecycleOptions & {
 
 export type AppleRunnerPrepareResult = {
   runner: Record<string, unknown>;
+  runnerSessionId: string;
+  launchIdentity: RunnerLaunchIdentity;
   cache?: RunnerXctestrunCacheKind;
   artifact?: RunnerXctestrunArtifactState;
   buildMs?: number;
@@ -50,6 +55,17 @@ export type AppleRunnerCommandExecutor = (
   command: RunnerCommand,
   options: AppleRunnerCommandOptions,
 ) => Promise<Record<string, unknown>>;
+
+export type AppleRunnerCommandExecution = Readonly<{
+  data: Record<string, unknown>;
+  receipt: RunnerExecutionReceipt;
+}>;
+
+export type AppleRunnerCommandReceiptExecutor = (
+  device: DeviceInfo,
+  command: RunnerCommand,
+  options: AppleRunnerCommandOptions,
+) => Promise<AppleRunnerCommandExecution>;
 
 export type AppleRunnerPrepareExecutor = (
   device: DeviceInfo,
@@ -67,6 +83,12 @@ export type AppleRunnerProvider = {
    * Scoped providers may adapt this call to a request-local transport.
    */
   runCommand: AppleRunnerCommandExecutor;
+  /**
+   * Executes a command and returns the identity of the session that actually
+   * produced the response. Required when a later effect reads runner-owned
+   * state, such as a screenshot or recording file.
+   */
+  runCommandWithReceipt?: AppleRunnerCommandReceiptExecutor;
   /**
    * Proves a runner can answer a cheap command after any required local setup.
    * Command-only providers may omit this and let callers fall back to uptime.
@@ -107,8 +129,9 @@ export function createLocalAppleRunnerProvider(
     AppleRunnerProvider,
     'prepare' | 'prewarm' | 'hasLiveSession' | 'releaseSpeculativeSession'
   >,
+  runCommandWithReceipt?: AppleRunnerCommandReceiptExecutor,
 ): AppleRunnerProvider {
-  return { runCommand, ...lifecycle };
+  return { runCommand, ...lifecycle, ...(runCommandWithReceipt ? { runCommandWithReceipt } : {}) };
 }
 
 export function resolveAppleRunnerProvider(

@@ -19,6 +19,7 @@ export type RecordingFacts = Readonly<{
   recordOnlySession: boolean;
   activeSessionApp?: RecordingAppIdentity;
   exportQuality?: RecordingExportQuality;
+  requestedFps?: number;
 }>;
 
 /** The keys of {@link RecordingFacts}, so a backend carries the facet without naming it twice. */
@@ -28,6 +29,7 @@ export const RECORDING_FACTS_KEYS = [
   'recordOnlySession',
   'activeSessionApp',
   'exportQuality',
+  'requestedFps',
 ] as const satisfies readonly (keyof RecordingFacts)[];
 
 /**
@@ -41,7 +43,11 @@ export function recordingFactsAreValid(value: Record<string, unknown>): value is
     typeof value.showTouches === 'boolean' &&
     typeof value.recordOnlySession === 'boolean' &&
     (value.exportQuality === undefined || isRecordingExportQuality(value.exportQuality)) &&
-    isOptionalAppIdentity(value.activeSessionApp)
+    isOptionalAppIdentity(value.activeSessionApp) &&
+    (value.requestedFps === undefined ||
+      (typeof value.requestedFps === 'number' &&
+        Number.isFinite(value.requestedFps) &&
+        value.requestedFps > 0))
   );
 }
 

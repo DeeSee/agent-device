@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import {
   captureAppleClockAnchor,
+  retrieveAppleRunnerRecording,
   runAppleRecordingRunner,
 } from './platform-runtime-screen-recording-apple-runner-host.ts';
 import { withAppleRunnerScreenRecordingTransport } from './platform-runtime-screen-recording-apple-runner-transport.ts';
@@ -9,9 +10,6 @@ import { withAppleSimulatorScreenRecordingTransport } from './platform-runtime-s
 const runnerClient = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('@agent-device/platform-apple/runner/operations', () => ({
   runAppleRunnerCommand: runnerClient.run,
-}));
-vi.mock('@agent-device/platform-apple/runner', () => ({
-  IOS_RUNNER_CONTAINER_BUNDLE_IDS: ['com.callstack.agentdevice.runner'],
 }));
 
 const simulator = {
@@ -53,4 +51,44 @@ test('focused simulator-only transport never warms a local Apple runner', async 
     },
   );
   expect(runnerClient.run).not.toHaveBeenCalled();
+});
+
+test('focused provider owns retrieval for its exact recording authority', async () => {
+  const recordingAuthority = Object.freeze({
+    runnerSessionId: 'provider-session',
+    launchIdentity: Object.freeze({
+      selectorFingerprint: 'provider-selector',
+      testHostContainerBundleId: 'com.example.provider.runner',
+    }),
+    startCommandId: 'provider-record-start',
+    remotePath: 'tmp/agent-device-recording-1.mp4',
+  });
+  const retrieve = vi.fn(async () => {});
+
+  await withAppleRunnerScreenRecordingTransport(
+    {
+      authority: 'scoped-provider',
+      available: true,
+      start: async () => ({ recordingAuthority, startState: 'active' }),
+      inspect: async () => 'owned-alive',
+      stop: async () => {},
+      release: async () => {},
+      retrieve,
+    },
+    async () => {
+      await retrieveAppleRunnerRecording(
+        simulator,
+        'scoped-provider',
+        recordingAuthority,
+        '/tmp/capture.mp4',
+      );
+    },
+  );
+
+  expect(retrieve).toHaveBeenCalledWith({
+    device: simulator,
+    recordingAuthority,
+    outputPath: '/tmp/capture.mp4',
+    signal: undefined,
+  });
 });

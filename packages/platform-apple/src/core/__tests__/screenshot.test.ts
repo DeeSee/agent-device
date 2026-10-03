@@ -15,7 +15,10 @@ vi.mock('@agent-device/host-kit/retry', async (importOriginal) => {
 });
 vi.mock('../runner-client.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../runner-client.ts')>();
-  return { ...actual, runAppleRunnerCommand: vi.fn(actual.runAppleRunnerCommand) };
+  return {
+    ...actual,
+    runAppleRunnerCommandWithReceipt: vi.fn(actual.runAppleRunnerCommandWithReceipt),
+  };
 });
 vi.mock('../simulator.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../simulator.ts')>();
@@ -55,7 +58,7 @@ import {
 } from '../screenshot.ts';
 import { ensureBootedSimulator, openIosSimulatorApp } from '../simulator.ts';
 import { prepareSimulatorStatusBarForScreenshot } from '../screenshot-status-bar.ts';
-import { runAppleRunnerCommand } from '../runner-client.ts';
+import { runAppleRunnerCommandWithReceipt } from '../runner-client.ts';
 import { runCmd } from '@agent-device/host-kit/command';
 import { withDiagnosticsScope } from '@agent-device/host-kit/diagnostics';
 import { retryWithPolicy } from '@agent-device/host-kit/retry';
@@ -65,7 +68,7 @@ import { IOS_TEST_SIMULATOR, MACOS_TEST_DEVICE } from './apple-core-stub-helpers
 
 const mockRunCmd = vi.mocked(runCmd);
 const mockRetryWithPolicy = vi.mocked(retryWithPolicy);
-const mockRunAppleRunnerCommand = vi.mocked(runAppleRunnerCommand);
+const mockRunAppleRunnerCommand = vi.mocked(runAppleRunnerCommandWithReceipt);
 const mockEnsureBootedSimulator = vi.mocked(ensureBootedSimulator);
 const mockOpenIosSimulatorApp = vi.mocked(openIosSimulatorApp);
 const mockPrepareStatusBarForScreenshot = vi.mocked(prepareSimulatorStatusBarForScreenshot);
@@ -85,7 +88,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockRunCmd.mockImplementation(execActual.runCmd);
   mockRetryWithPolicy.mockImplementation(retryActual.retryWithPolicy);
-  mockRunAppleRunnerCommand.mockImplementation(runnerActual.runAppleRunnerCommand);
+  mockRunAppleRunnerCommand.mockImplementation(runnerActual.runAppleRunnerCommandWithReceipt);
   mockEnsureBootedSimulator.mockImplementation(simulatorActual.ensureBootedSimulator);
   mockOpenIosSimulatorApp.mockImplementation(simulatorActual.openIosSimulatorApp);
   mockPrepareStatusBarForScreenshot.mockImplementation(
@@ -148,7 +151,7 @@ test('captureSimulatorScreenshotWithFallback falls back to runner after retry ex
       exitCode: 60,
     }),
   );
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/fallback.png' });
+  mockRunAppleRunnerCommand.mockResolvedValue(runnerExecution({ message: 'tmp/fallback.png' }));
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -194,7 +197,9 @@ test('captureSimulatorScreenshotWithFallback falls back to runner after simctl s
       timeoutMs: 20_000,
     }),
   );
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/fallback-timeout.png' });
+  mockRunAppleRunnerCommand.mockResolvedValue(
+    runnerExecution({ message: 'tmp/fallback-timeout.png' }),
+  );
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -387,7 +392,9 @@ test('captureSimulatorScreenshotWithFallback emits fallback diagnostic before us
             timeoutMs: 20_000,
           }),
         );
-        mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/diag-fallback.png' });
+        mockRunAppleRunnerCommand.mockResolvedValue(
+          runnerExecution({ message: 'tmp/diag-fallback.png' }),
+        );
         mockRunCmd.mockImplementation(async (_cmd, args) => {
           if (args.includes('get_app_container')) {
             return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -436,7 +443,9 @@ test('captureSimulatorScreenshotWithFallback uses simulator runner fallback by d
       timeoutMs: 20_000,
     }),
   );
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/default-fallback.png' });
+  mockRunAppleRunnerCommand.mockResolvedValue(
+    runnerExecution({ message: 'tmp/default-fallback.png' }),
+  );
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -481,7 +490,7 @@ test('captureScreenshotViaRunner reuses a verified simulator container path', as
   const device = { ...IOS_TEST_SIMULATOR, id: 'sim-runner-container-cache' };
   await fs.mkdir(path.dirname(runnerImage), { recursive: true });
   await fs.writeFile(runnerImage, 'runner-image', 'utf8');
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/capture.png' });
+  mockRunAppleRunnerCommand.mockResolvedValue(runnerExecution({ message: 'tmp/capture.png' }));
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -514,10 +523,12 @@ test('captureScreenshotViaRunner reports the display facts a runner capture meas
   const device = { ...IOS_TEST_SIMULATOR, id: 'sim-runner-metadata' };
   await fs.mkdir(path.dirname(runnerImage), { recursive: true });
   await fs.writeFile(runnerImage, 'runner-image', 'utf8');
-  mockRunAppleRunnerCommand.mockResolvedValue({
-    message: 'tmp/duo.png',
-    [SCREEN_CAPTURE_TABLE.key]: MEASURED_CAPTURE.metadata,
-  });
+  mockRunAppleRunnerCommand.mockResolvedValue(
+    runnerExecution({
+      message: 'tmp/duo.png',
+      [SCREEN_CAPTURE_TABLE.key]: MEASURED_CAPTURE.metadata,
+    }),
+  );
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -542,7 +553,7 @@ test('captureScreenshotViaRunner reports no display facts for a pre-panel runner
   const device = { ...IOS_TEST_SIMULATOR, id: 'sim-runner-no-metadata' };
   await fs.mkdir(path.dirname(runnerImage), { recursive: true });
   await fs.writeFile(runnerImage, 'runner-image', 'utf8');
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: 'tmp/legacy.png' });
+  mockRunAppleRunnerCommand.mockResolvedValue(runnerExecution({ message: 'tmp/legacy.png' }));
   mockRunCmd.mockImplementation(async (_cmd, args) => {
     if (args.includes('get_app_container')) {
       return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
@@ -563,7 +574,7 @@ test('captureScreenshotViaRunner copies macOS runner screenshots from the host',
   const sourcePath = path.join(tmpDir, 'runner.png');
   const outPath = path.join(tmpDir, 'screen.png');
   await fs.writeFile(sourcePath, 'runner-image', 'utf8');
-  mockRunAppleRunnerCommand.mockResolvedValue({ message: sourcePath });
+  mockRunAppleRunnerCommand.mockResolvedValue(runnerExecution({ message: sourcePath }));
   mockRunCmd.mockRejectedValue(new Error('macOS screenshot must not invoke xcrun devicectl'));
 
   try {
@@ -606,3 +617,45 @@ test('captureSimulatorScreenshotWithFallback keeps the panel rotation for a runn
   });
   assert.deepEqual(facts, { displayRotation: 'landscape-right' });
 });
+
+test('simulator runner container cache never crosses session receipts', async () => {
+  const tmpDir = await mkdtempForTest('agent-device-runner-session-cache-');
+  const containerPath = path.join(tmpDir, 'container');
+  const runnerImage = path.join(containerPath, 'tmp', 'capture.png');
+  const device = { ...IOS_TEST_SIMULATOR, id: 'sim-runner-session-cache' };
+  await fs.mkdir(path.dirname(runnerImage), { recursive: true });
+  await fs.writeFile(runnerImage, 'runner-image', 'utf8');
+  mockRunAppleRunnerCommand
+    .mockResolvedValueOnce(runnerExecution({ message: 'tmp/capture.png' }, 'session-a'))
+    .mockResolvedValueOnce(runnerExecution({ message: 'tmp/capture.png' }, 'session-b'));
+  mockRunCmd.mockImplementation(async (_cmd, args) => {
+    if (args.includes('get_app_container')) {
+      return { exitCode: 0, stdout: `${containerPath}\n`, stderr: '' };
+    }
+    throw new Error(`Unexpected xcrun args: ${args.join(' ')}`);
+  });
+
+  try {
+    await captureScreenshotViaRunner(device, path.join(tmpDir, 'first.png'));
+    await captureScreenshotViaRunner(device, path.join(tmpDir, 'second.png'));
+    assert.equal(
+      mockRunCmd.mock.calls.filter(([, args]) => args.includes('get_app_container')).length,
+      2,
+    );
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+function runnerExecution(data: Record<string, unknown>, runnerSessionId = 'runner-session-1') {
+  return {
+    data,
+    receipt: {
+      runnerSessionId,
+      launchIdentity: {
+        selectorFingerprint: 'selector-a',
+        testHostContainerBundleId: 'com.example.runner.xctrunner',
+      },
+    },
+  };
+}

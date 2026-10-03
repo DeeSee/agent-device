@@ -220,7 +220,7 @@ export function resolveRunnerAppBundleId(env: NodeJS.ProcessEnv = process.env): 
   return configured || DEFAULT_IOS_RUNNER_APP_BUNDLE_ID;
 }
 
-function resolveRunnerTestBundleId(env: NodeJS.ProcessEnv = process.env): string {
+export function resolveRunnerTestBundleId(env: NodeJS.ProcessEnv = process.env): string {
   const configured = normalizeBundleId(env.AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID);
   if (configured) {
     return configured;
@@ -228,23 +228,10 @@ function resolveRunnerTestBundleId(env: NodeJS.ProcessEnv = process.env): string
   return `${resolveRunnerAppBundleId(env)}.uitests`;
 }
 
-function resolveRunnerContainerBundleIds(env: NodeJS.ProcessEnv = process.env): string[] {
-  const appBundleId = resolveRunnerAppBundleId(env);
-  const testBundleId = resolveRunnerTestBundleId(env);
-  return Array.from(
-    new Set(
-      [
-        normalizeBundleId(env.AGENT_DEVICE_IOS_RUNNER_CONTAINER_BUNDLE_ID),
-        `${testBundleId}.xctrunner`,
-        appBundleId,
-      ].filter((id) => id.length > 0),
-    ),
-  );
+export function resolveRunnerTestHostBundleId(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = normalizeBundleId(env.AGENT_DEVICE_IOS_RUNNER_CONTAINER_BUNDLE_ID);
+  return configured || `${resolveRunnerTestBundleId(env)}.xctrunner`;
 }
-
-export const IOS_RUNNER_CONTAINER_BUNDLE_IDS: string[] = resolveRunnerContainerBundleIds(
-  process.env,
-);
 
 export function resolveExpectedRunnerCacheMetadata(
   device: DeviceInfo,
@@ -571,7 +558,11 @@ function sortJsonKeys(value: unknown): unknown {
   );
 }
 
-export function resolveRunnerMaxConcurrentDestinationsFlag(device: DeviceInfo): string {
+export function resolveRunnerMaxConcurrentDestinationsFlag(
+  device: DeviceInfo,
+):
+  | '-maximum-concurrent-test-device-destinations'
+  | '-maximum-concurrent-test-simulator-destinations' {
   if (isMacOs(device)) {
     return '-maximum-concurrent-test-device-destinations';
   }
@@ -640,11 +631,8 @@ export function resolveRunnerArchBuildSettings(env: NodeJS.ProcessEnv = process.
   return archs ? [`ARCHS=${archs}`] : [];
 }
 
-export function resolveRunnerSandboxBuildArgs(): string[] {
-  return [
-    ...RUNNER_SANDBOX_BUILD_ARGS,
-    `OTHER_SWIFT_FLAGS=${resolveRunnerSwiftFlags(process.env)}`,
-  ];
+export function resolveRunnerSandboxBuildArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...RUNNER_SANDBOX_BUILD_ARGS, `OTHER_SWIFT_FLAGS=${resolveRunnerSwiftFlags(env)}`];
 }
 
 function resolveRunnerSwiftFlags(env: NodeJS.ProcessEnv): string {

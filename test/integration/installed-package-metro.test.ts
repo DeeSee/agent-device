@@ -298,6 +298,9 @@ test('installed package exposes Node APIs and packaged companion tunnel entrypoi
             return typeof manager.ensure;
           },
           './artifacts': async (mod) => {
+            if (typeof mod.verifyAppleRunnerXctestrun !== 'function') {
+              throw new Error('verifyAppleRunnerXctestrun export is missing');
+            }
             const name = await mod.resolveAndroidArchivePackageName(
               nodePath.join(process.cwd(), 'package.json'),
             );

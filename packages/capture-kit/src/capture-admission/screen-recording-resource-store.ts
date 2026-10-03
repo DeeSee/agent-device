@@ -6,3 +6,5 @@ export const screenRecordingResourceStore = createDurableCaptureResourceStore({
   fileName: 'screen-recording.resource.json',
   displayName: 'screen recording',
 });
+
+export const SCREEN_RECORDING_COMPLETION_METADATA_KEY = 'completion';

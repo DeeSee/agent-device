@@ -1,3 +1,7 @@
+import {
+  RUNNER_LAUNCH_IDENTITY_FIXTURE,
+  makeRunnerLaunchSelection,
+} from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -59,9 +63,19 @@ afterEach(async () => {
 test('runner-internal request sites build exactly their runner-requests.json entries', async () => {
   const sent: RunnerCommand[] = [];
   await withAppleRunnerProvider(
-    async (_device, request) => {
-      sent.push(request);
-      return {};
+    {
+      hasLiveSession: () => true,
+      runCommand: async () => ({}),
+      runCommandWithReceipt: async (_device, request) => {
+        sent.push(request);
+        return {
+          data: {},
+          receipt: {
+            runnerSessionId: 'fixture-session',
+            launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+          },
+        };
+      },
     },
     { deviceId: IOS_SIMULATOR.id },
     async () => await prepareIosRunner(IOS_SIMULATOR, { healthTimeoutMs: 1_000 }),
@@ -79,7 +93,10 @@ test('runner-internal request sites build exactly their runner-requests.json ent
   const session = makeRunnerSession({
     port: server.port,
     xctestrunPath: path.join(scratch, 'runner.xctestrun'),
-    jsonPath: path.join(scratch, 'runner.json'),
+    ownedEnvironmentFiles: [
+      path.join(scratch, 'runner.xctestrun'),
+      path.join(scratch, 'runner.json'),
+    ],
   });
   runnerState.ensureRunnerSession.mockResolvedValue(session);
   appleRunnerTestHost.update({
@@ -105,19 +122,30 @@ test('runner-internal request sites build exactly their runner-requests.json ent
   });
   writeRunnerLease({
     ...buildRunnerLease({
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+      artifactSource: 'internal',
+
       device: IOS_SIMULATOR,
       sessionId: `${IOS_SIMULATOR.id}:${server.port}:1`,
       runnerPid: 424242,
       port: server.port,
       cacheKey: RUNNER_CACHE_KEY_FIXTURE,
       xctestrunPath: path.join(runnerState.derivedPath, 'Build', 'Products', 'r.xctestrun'),
-      jsonPath: path.join(runnerState.derivedPath, 'Build', 'Products', 'r.json'),
+      ownedEnvironmentFiles: [
+        path.join(runnerState.derivedPath, 'Build', 'Products', 'r.xctestrun'),
+        path.join(runnerState.derivedPath, 'Build', 'Products', 'r.json'),
+      ],
     }),
     ownerToken: 'owner-99999-deadbeef',
     ownerPid: 99999,
     ownerStartTime: 'not-a-real-start-time',
   });
-  assert.ok(await tryAdoptRunnerSessionFromLease(IOS_SIMULATOR, {}), 'the lease was not adopted');
+  assert.ok(
+    await tryAdoptRunnerSessionFromLease(IOS_SIMULATOR, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+    'the lease was not adopted',
+  );
 
   const received = server.requests.map((request) => request.body);
   assert.deepEqual(

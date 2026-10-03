@@ -19,6 +19,7 @@ export {
   prewarmIosRunnerSession,
   releaseSpeculativeIosRunnerSessionFor,
   runAppleRunnerCommand,
+  runAppleRunnerCommandWithReceipt,
 } from '../runner/runner-client.ts';
 export { applyXctestRunnerAppIconFromDerivedPath } from '../runner/runner-icon.ts';
 export {

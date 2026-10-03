@@ -13,6 +13,11 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
   return {
     ...actual,
     prepareIosRunner: vi.fn(async () => ({
+      runnerSessionId: 'test-runner-session',
+      launchIdentity: {
+        selectorFingerprint: 'test-selector',
+        testHostContainerBundleId: 'com.example.runner.xctrunner',
+      },
       runner: { currentUptimeMs: 42 },
       connectMs: 3,
       healthCheckMs: 3,
@@ -81,6 +86,11 @@ beforeEach(() => {
   mockDispatch.mockResolvedValue(undefined);
   mockPrepareIosRunner.mockReset();
   mockPrepareIosRunner.mockResolvedValue({
+    runnerSessionId: 'test-runner-session',
+    launchIdentity: {
+      selectorFingerprint: 'test-selector',
+      testHostContainerBundleId: 'com.example.runner.xctrunner',
+    },
     runner: { currentUptimeMs: 42 },
     connectMs: 3,
     healthCheckMs: 3,
@@ -633,6 +643,11 @@ test('prepare ios-runner starts the XCTest runner on an explicit iOS selector', 
       kind: 'simulator',
       connectMs: 3,
       healthCheckMs: 3,
+      runnerSessionId: 'test-runner-session',
+      launchIdentity: {
+        selectorFingerprint: 'test-selector',
+        testHostContainerBundleId: 'com.example.runner.xctrunner',
+      },
       runner: { currentUptimeMs: 42 },
       message: 'Prepared Apple runner: iPhone 17 Pro',
     });
@@ -656,6 +671,11 @@ test('prepare ios-runner explains overlapping timing fields with additive parts'
     mockPrepareIosRunner.mockImplementationOnce(async () => {
       vi.setSystemTime(new Date(28_337));
       return {
+        runnerSessionId: 'test-runner-session',
+        launchIdentity: {
+          selectorFingerprint: 'test-selector',
+          testHostContainerBundleId: 'com.example.runner.xctrunner',
+        },
         runner: { currentUptimeMs: 42 },
         buildMs: 10_642,
         connectMs: 12_635,

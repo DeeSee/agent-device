@@ -1,3 +1,4 @@
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import { beforeEach, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
@@ -1036,6 +1037,8 @@ function makeBadCacheRecoveryFixtures() {
 
 function assertRecoveredPrepareResult(result: Awaited<ReturnType<typeof prepareIosRunner>>): void {
   assert.deepEqual(result, {
+    runnerSessionId: 'session-8101',
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
     runner: { uptimeMs: 42 },
     cache: 'miss',
     artifact: 'rebuilt',

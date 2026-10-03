@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import type { ArtifactAdapter, FileInputRef } from '../../../io.ts';
 import {
   createAgentDevice,
@@ -125,4 +125,75 @@ test('record keeps successful reserved outputs available after publish', async (
 
   assert.equal(result.artifact?.kind, 'artifact');
   assert.equal(cleanupCalled, false);
+});
+
+test('record stop keeps terminal raw output when artifact publication fails', async () => {
+  let cleanupCalled = false;
+  const device = createAgentDevice({
+    backend: {
+      platform: 'ios',
+      stopRecording: async (_context, options) => ({ path: options?.outPath }),
+    },
+    artifacts: {
+      ...artifacts,
+      reserveOutput: async (_ref, options) => ({
+        path: `/tmp/${options.field}${options.ext}`,
+        visibility: options.visibility ?? 'client-visible',
+        publicationFailurePreservesOutput: true,
+        publish: async () => {
+          throw new Error('artifact publication unavailable');
+        },
+        cleanup: async () => {
+          cleanupCalled = true;
+        },
+      }),
+    },
+    policy: restrictedCommandPolicy(),
+  });
+
+  const result = await device.recording.record({
+    action: 'stop',
+    out: { kind: 'downloadableArtifact', fileName: 'recording.mp4' },
+    hideTouches: true,
+  });
+
+  assert.equal(result.kind, 'recordingStopped');
+  assert.equal(result.path, '/tmp/path.mp4');
+  assert.deepEqual(result.artifactPublication, {
+    status: 'unavailable',
+    reason: 'adapter-failed',
+  });
+  assert.equal(cleanupCalled, false);
+});
+
+test('record stop refuses a destructive publication adapter before backend effects', async () => {
+  let cleanupCalled = false;
+  const stopRecording = vi.fn(async () => ({ path: '/tmp/path.mp4' }));
+  const publish = vi.fn(async () => undefined);
+  const device = createAgentDevice({
+    backend: { platform: 'ios', stopRecording },
+    artifacts: {
+      ...artifacts,
+      reserveOutput: async (_ref, options) => ({
+        path: `/tmp/${options.field}${options.ext}`,
+        visibility: options.visibility ?? 'client-visible',
+        publish,
+        cleanup: async () => {
+          cleanupCalled = true;
+        },
+      }),
+    },
+    policy: restrictedCommandPolicy(),
+  });
+
+  await expect(
+    device.recording.record({
+      action: 'stop',
+      out: { kind: 'downloadableArtifact', fileName: 'recording.mp4' },
+      hideTouches: true,
+    }),
+  ).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+  expect(stopRecording).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  expect(cleanupCalled).toBe(true);
 });

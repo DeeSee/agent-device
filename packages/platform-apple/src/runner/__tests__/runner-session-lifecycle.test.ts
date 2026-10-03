@@ -1,3 +1,15 @@
+import {
+  stubRunnerDeviceReadiness,
+  captureDiagnostics,
+  makeClassifyOwnerLivenessViaMocks,
+  assertRunnerCommand,
+  makeBackgroundRunner,
+  makeRunnerArtifact,
+  runnerResponse,
+  RUNNER_CACHE_METADATA_FIXTURE,
+  RUNNER_CACHE_KEY_FIXTURE,
+} from './runner-session-fixtures.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,16 +20,6 @@ import { appleRunnerTestHost } from '../test-host.ts';
 import { resolveRunnerCacheKey } from '../runner-cache-metadata.ts';
 import { resolveRunnerLaunchLogPath } from '../runner-io.ts';
 import type { RunnerSession } from '../runner-session-types.ts';
-import {
-  captureDiagnostics,
-  makeClassifyOwnerLivenessViaMocks,
-  assertRunnerCommand,
-  makeBackgroundRunner,
-  makeRunnerArtifact,
-  runnerResponse,
-  RUNNER_CACHE_METADATA_FIXTURE,
-  RUNNER_CACHE_KEY_FIXTURE,
-} from './runner-session-fixtures.ts';
 import { mkdtempForTestSync } from './tmp-dir.ts';
 
 const {
@@ -107,6 +109,28 @@ vi.mock('../runner-xctestrun.ts', async () => {
     ensureXctestrunArtifact: mockEnsureXctestrunArtifact,
     prepareXctestrunWithEnv: mockPrepareXctestrunWithEnv,
     resolveExpectedRunnerCacheMetadata: mockResolveExpectedRunnerCacheMetadata,
+    resolveRunnerLaunchSelection: async (
+      device: unknown,
+      options: Record<string, unknown>,
+      budget: unknown,
+    ) => {
+      const cache = mockResolveExpectedRunnerCacheMetadata(device, undefined, budget);
+      const derived = mockResolveRunnerDerivedPath(device, cache);
+      return {
+        source: options.iosXctestrunFile ? 'external' : 'internal',
+        identity: {
+          selectorFingerprint: JSON.stringify([
+            derived,
+            cache,
+            options.iosXctestrunFile,
+            options.iosXctestEnvDir,
+          ]),
+          testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+        },
+        derived,
+        expectedCacheMetadata: cache,
+      };
+    },
     resolveRunnerDerivedPath: mockResolveRunnerDerivedPath,
   };
 });
@@ -146,6 +170,7 @@ function setRunnerLeaseOwnerStateDir(stateDir: string | undefined): void {
 }
 
 beforeEach(async () => {
+  stubRunnerDeviceReadiness();
   appleRunnerTestHost.update({
     runCmdBackground: mockRunCmdBackground,
     isProcessAlive: mockIsProcessAlive,
@@ -177,6 +202,8 @@ beforeEach(async () => {
   delete process.env.AGENT_DEVICE_IOS_RUNNER_IDLE_STOP_MS;
   mockRunXcrun.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/base-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,

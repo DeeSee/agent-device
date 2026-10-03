@@ -41,3 +41,24 @@ test('runner exit wakes startup probing when no listener marker arrives', () => 
 
   assert.equal(signal.wake.aborted, true);
 });
+
+test('runner listener readiness classifies an address-in-use failure across chunks', () => {
+  const signal = createRunnerListenerReadySignal();
+
+  signal.observe('AGENT_DEVICE_RUNNER_LISTENER_FAILED=Error Domain=NSPOSIXErrorDomain ');
+  signal.observe('Code=48 "Address already in use"');
+
+  assert.equal(signal.wake.aborted, true);
+  assert.equal(signal.state(), 'port_in_use');
+  signal.finish();
+  assert.equal(signal.state(), 'port_in_use');
+});
+
+test('runner listener readiness does not classify unowned address-in-use output', () => {
+  const signal = createRunnerListenerReadySignal();
+
+  signal.observe('Some app log: Address already in use');
+
+  assert.equal(signal.wake.aborted, false);
+  assert.equal(signal.state(), 'pending');
+});

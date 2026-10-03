@@ -42,6 +42,17 @@ test('stop response derives client telemetry and chunk artifact paths', () => {
     scope: 'app',
     showTouches: true,
     recordOnlySession: false,
+    cadence: {
+      status: 'measured',
+      source: 'media-pts',
+      requestedFps: 30,
+      sampleCount: 3,
+      mediaDurationMs: 100,
+      firstPtsMs: 0,
+      lastPtsMs: 100,
+      maxInterSampleGapMs: 50,
+      effectiveFps: 20,
+    },
     telemetryPath: '/daemon/capture.gesture-telemetry.json',
     chunks: [
       { index: 0, path: '/daemon/capture.mp4', clientOutPath: '/client/capture.mp4' },
@@ -64,6 +75,11 @@ test('stop response derives client telemetry and chunk artifact paths', () => {
       localPath: '/client/capture-1.mp4',
     }),
   );
+  expect(response.data?.cadence).toMatchObject({
+    status: 'measured',
+    requestedFps: 30,
+    effectiveFps: 20,
+  });
 });
 
 test('stop response separates the recording window from the clip that was captured', () => {

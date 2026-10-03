@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,12 +42,15 @@ function sessionFailingWith(
   const runnerLogPath = path.join(mkdtempForTestSync('runner-early-exit-'), 'runner.log');
   fs.writeFileSync(runnerLogPath, log);
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: 'early-exit-session',
     device: { platform: 'apple', id: 'device-1', name: 'iPhone', kind: 'device', booted: true },
     deviceId: 'device-1',
     port: 8100,
     xctestrunPath: '/tmp/runner.xctestrun',
-    jsonPath: '/tmp/runner.json',
+    ownedEnvironmentFiles: ['/tmp/runner.xctestrun', '/tmp/runner.json'],
     runnerLogPath,
     readLogTail: (maxBytes) =>
       readRunnerLogTail({ logPath: runnerLogPath, startOffset: generationStartOffset }, maxBytes),
@@ -193,6 +198,8 @@ function simulatorSessionFailingWith(log: string, simulatorSetPath?: string): Ru
     },
     deviceId: CAPTURED_SCOPED_SIMULATOR.udid,
     xctestrunArtifact: {
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
       xctestrunPath: '/tmp/runner.xctestrun',
       derived: '/tmp/derived',
       cache: 'external',

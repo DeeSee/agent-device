@@ -13,7 +13,10 @@ import type { RepeatedInput } from '@agent-device/contracts/interaction';
 import type { ScrollDirection } from '@agent-device/contracts/scroll-gesture';
 import type { ResolvedScrollExecutionOptions } from '@agent-device/contracts/scroll-command';
 import type { TvRemoteButton } from '@agent-device/contracts/tv-remote';
-import type { RecordingExportQuality } from '@agent-device/contracts/recording';
+import type {
+  RecordingExportQuality,
+  RecordingSupplementalStatus,
+} from '@agent-device/contracts/recording';
 import type { SessionSurface } from '@agent-device/contracts/session';
 import type {
   DeviceTarget,
@@ -300,6 +303,7 @@ export type BackendRecordingOptions = {
 };
 
 export type BackendRecordingResult = Record<string, unknown> & {
+  supplemental?: RecordingSupplementalStatus;
   path?: string;
   telemetryPath?: string;
   warning?: string;

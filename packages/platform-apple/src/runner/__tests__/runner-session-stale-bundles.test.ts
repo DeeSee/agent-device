@@ -1,3 +1,4 @@
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, test, vi } from 'vitest';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
@@ -83,6 +84,28 @@ vi.mock('../runner-xctestrun.ts', async () => {
     ensureXctestrunArtifact: mockEnsureXctestrunArtifact,
     prepareXctestrunWithEnv: mockPrepareXctestrunWithEnv,
     resolveExpectedRunnerCacheMetadata: mockResolveExpectedRunnerCacheMetadata,
+    resolveRunnerLaunchSelection: async (
+      device: unknown,
+      options: Record<string, unknown>,
+      budget: unknown,
+    ) => {
+      const cache = mockResolveExpectedRunnerCacheMetadata(device, undefined, budget);
+      const derived = mockResolveRunnerDerivedPath(device, cache);
+      return {
+        source: options.iosXctestrunFile ? 'external' : 'internal',
+        identity: {
+          selectorFingerprint: JSON.stringify([
+            derived,
+            cache,
+            options.iosXctestrunFile,
+            options.iosXctestEnvDir,
+          ]),
+          testHostContainerBundleId: 'com.callstack.agentdevice.runner.uitests.xctrunner',
+        },
+        derived,
+        expectedCacheMetadata: cache,
+      };
+    },
     resolveRunnerDerivedPath: mockResolveRunnerDerivedPath,
   };
 });
@@ -95,7 +118,6 @@ vi.mock('../runner-startup-transport.ts', async () => {
 });
 
 import { abortAllIosRunnerSessions, ensureRunnerSession } from '../runner-session.ts';
-import { IOS_RUNNER_CONTAINER_BUNDLE_IDS } from '../runner-xctestrun.ts';
 import { AppError } from '@agent-device/kernel/errors';
 
 const TEST_OWNER_START_TIME = 'fixed-test-owner-start-time';
@@ -129,6 +151,8 @@ beforeEach(async () => {
   );
   mockRunXcrun.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
   mockEnsureXctestrunArtifact.mockResolvedValue({
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+
     xctestrunPath: '/tmp/base-runner.xctestrun',
     derived: '/tmp/derived',
     cacheKey: RUNNER_CACHE_KEY_FIXTURE,
@@ -194,7 +218,7 @@ test('runner session stale bundle cleanup is best-effort when simctl stalls', as
   assert.equal(mockRunCmdBackground.mock.calls.length, 1);
 });
 
-test('stale bundle uninstalls start concurrently', async () => {
+test('stale cleanup uninstalls only the selected test host', async () => {
   const device = { ...IOS_SIMULATOR, id: 'runner-session-clean-concurrent-sim' };
   const uninstallGates: Array<
     (result: { exitCode: number; stdout: string; stderr: string }) => void
@@ -209,11 +233,8 @@ test('stale bundle uninstalls start concurrently', async () => {
   });
 
   const sessionPromise = ensureRunnerSession(device, { cleanStaleBundles: true });
-  // Both container bundle uninstalls must be in flight before either resolves;
-  // against the sequential pre-fix loop this wait times out with one gate held.
-  await vi.waitFor(() =>
-    assert.equal(uninstallGates.length, IOS_RUNNER_CONTAINER_BUNDLE_IDS.length),
-  );
+  // Cleanup is bound to the selected host even if other runner apps are installed.
+  await vi.waitFor(() => assert.equal(uninstallGates.length, 1));
   for (const resolve of uninstallGates) {
     resolve({ exitCode: 0, stdout: '', stderr: '' });
   }

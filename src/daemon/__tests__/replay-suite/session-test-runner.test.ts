@@ -81,6 +81,7 @@ test('session_list includes device_udid and ios_simulator_device_set for iOS ses
     const iosScoped = sessions.find((s) => s.name === 'ios-scoped');
     expect(iosScoped?.device_udid).toBe('DEF-456');
     expect(iosScoped?.ios_simulator_device_set).toBe('/tmp/tenant-a/simulators');
+    expect(iosScoped?.lifecycle).toBe('opened');
     const android = sessions.find((s) => s.name === 'android-1');
     const macos = sessions.find((s) => s.name === 'macos-1');
     expect(android?.device_udid).toBe(undefined);
@@ -89,6 +90,65 @@ test('session_list includes device_udid and ios_simulator_device_set for iOS ses
     expect(macos?.device_id).toBe('host-macos-local');
     expect(macos?.device_udid).toBe(undefined);
     expect(macos?.ios_simulator_device_set).toBe(undefined);
+  }
+});
+
+test('session_list exposes closed lifecycle facts needed for request reconciliation', async () => {
+  const sessionStore = makeSessionStore();
+  const reserved = makeSession('reserved', {
+    platform: 'apple',
+    id: 'DEVICE-1',
+    name: 'iPhone',
+    kind: 'device',
+    booted: true,
+  });
+  reserved.deviceClaim = {
+    deviceKey: 'DEVICE-1',
+    ownerToken: 'owner',
+    ownerPid: 1,
+    ownerStartTime: null,
+    claimRootId: 'root',
+    claimBindingId: 'binding',
+    reservationPhase: 'reserved',
+  };
+  const opened = makeSession('opened', {
+    platform: 'apple',
+    id: 'DEVICE-2',
+    name: 'iPhone',
+    kind: 'device',
+    booted: true,
+  });
+  opened.appBundleId = 'com.example.app';
+  const closing = makeSession('closing', {
+    platform: 'apple',
+    id: 'DEVICE-3',
+    name: 'iPhone',
+    kind: 'device',
+    booted: true,
+  });
+  closing.closeRecovery = { state: 'retry-required' };
+  sessionStore.set('reserved', reserved);
+  sessionStore.set('opened', opened);
+  sessionStore.set('closing', closing);
+
+  const response = await handleSessionCommands({
+    req: { token: 't', session: 'default', command: 'session_list', positionals: [] },
+    sessionName: 'default',
+    logPath: path.join(mkdtempForTestSync('daemon'), 'daemon.log'),
+    sessionStore,
+    invoke: noopInvoke,
+  });
+  expect(response?.ok).toBe(true);
+  if (response?.ok) {
+    const sessions = response.data?.sessions as Array<Record<string, unknown>>;
+    expect(sessions.find((value) => value.name === 'reserved')?.lifecycle).toBe('reserved');
+    expect(sessions.find((value) => value.name === 'opened')).toMatchObject({
+      lifecycle: 'opened',
+      appBundleId: 'com.example.app',
+    });
+    expect(sessions.find((value) => value.name === 'closing')?.lifecycle).toBe(
+      'close_retry_required',
+    );
   }
 });
 

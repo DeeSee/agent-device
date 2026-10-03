@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import assert from 'node:assert/strict';
 import type { ExecResult } from '@agent-device/host-kit/command';
 import { afterEach, test } from 'vitest';
@@ -15,12 +17,15 @@ afterEach(async () => {
 
 function sessionFor(port: number): RunnerSession {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: `exchange:${port}`,
     device: IOS_SIMULATOR,
     deviceId: IOS_SIMULATOR.id,
     port,
     xctestrunPath: '/tmp/fake.xctestrun',
-    jsonPath: '/tmp/fake.json',
+    ownedEnvironmentFiles: ['/tmp/fake.xctestrun', '/tmp/fake.json'],
     testPromise: new Promise<ExecResult>(() => {}),
     child: { pid: process.pid, exitCode: null },
     state: 'ready',
@@ -77,9 +82,12 @@ test('the readiness probe preserves its main-thread busy report when the command
 });
 
 test.each(['activate', 'terminate', 'targetReset'] as const)(
-  'a starting runner sends exempt %s without a readiness preflight',
+  'a starting runner proves readiness before sending exempt %s',
   async (command) => {
-    server = await startFakeRunnerServer([{ kind: 'ok', data: {} }]);
+    server = await startFakeRunnerServer([
+      { kind: 'ok', data: { uptimeMs: 1 } },
+      { kind: 'ok', data: {} },
+    ]);
     const session = sessionFor(server.port);
     session.state = 'starting';
 
@@ -94,7 +102,7 @@ test.each(['activate', 'terminate', 'targetReset'] as const)(
 
     assert.deepEqual(
       server.requests.map((request) => request.command),
-      [command],
+      ['uptime', command],
     );
   },
 );

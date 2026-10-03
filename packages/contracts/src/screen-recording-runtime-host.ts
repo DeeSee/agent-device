@@ -7,6 +7,7 @@ import type {
   OwnedProcessRecordWriter,
 } from './platform-runtime-host.ts';
 import type { RecordingGestureEvent } from './screen-recording-runtime.ts';
+import type { RecordingSupplementalStatus, ScreenRecordingCadence } from './recording.ts';
 
 /** A long-lived native recorder process. It deliberately carries no request scope. */
 export type ScreenRecordingBackgroundProcess = Readonly<{
@@ -22,19 +23,40 @@ export type AppleScreenRecordingRunnerRequest =
       appBundleId: string;
       outputPath: string;
       fps?: number;
+      iosXctestrunFile?: string;
+      iosXctestDerivedDataPath?: string;
+      iosXctestEnvDir?: string;
     }>
   | Readonly<{
       kind: 'stop';
       appBundleId?: string;
-      runnerSessionId: string;
       runnerAuthority: 'local-lease' | 'scoped-provider';
+      recordingAuthority: AppleRunnerRecordingAuthority;
+    }>
+  | Readonly<{
+      kind: 'release';
+      runnerAuthority: 'local-lease' | 'scoped-provider';
+      recordingAuthority: AppleRunnerRecordingAuthority;
+      reason: 'retrieved' | 'abandoned';
     }>;
+
+export type AppleRunnerLaunchIdentity = Readonly<{
+  selectorFingerprint: string;
+  testHostContainerBundleId: string;
+}>;
+
+export type AppleRunnerRecordingAuthority = Readonly<{
+  runnerSessionId: string;
+  launchIdentity: AppleRunnerLaunchIdentity;
+  startCommandId: string;
+  remotePath?: string;
+}>;
 
 export type AppleScreenRecordingRunnerResult = Readonly<{
   recorderStartUptimeMs?: number;
-  runnerSessionId?: string;
   runnerAuthority?: 'local-lease' | 'scoped-provider';
-  remotePath?: string;
+  recordingAuthority?: AppleRunnerRecordingAuthority;
+  startState?: 'active' | 'uncertain';
 }>;
 
 export type AppleScreenRecordingAvailability =
@@ -64,12 +86,13 @@ export type AppleScreenRecordingHost = Readonly<{
   ): Promise<'terminated' | 'already-missing' | 'ownership-lost'>;
   inspectRunner(
     device: DeviceInfo,
-    runnerSessionId: string,
+    recordingAuthority: AppleRunnerRecordingAuthority,
     runnerAuthority: 'local-lease' | 'scoped-provider',
   ): Promise<ManagedProcessOwnership>;
   retrieveRunnerRecording(
     device: DeviceInfo,
-    remotePath: string,
+    runnerAuthority: 'local-lease' | 'scoped-provider',
+    recordingAuthority: AppleRunnerRecordingAuthority,
     outputPath: string,
     signal?: AbortSignal,
   ): Promise<void>;
@@ -78,7 +101,7 @@ export type AppleScreenRecordingHost = Readonly<{
     appBundleId: string,
     signal?: AbortSignal,
   ): Promise<AppleScreenRecordingClockAnchor | undefined>;
-  isRunnerBundleId(bundleId: string): Promise<boolean>;
+  isRunnerBundleId(device: DeviceInfo, bundleId: string): Promise<boolean>;
 }>;
 
 /** Scoped Android transport; callers cannot issue arbitrary adb commands. */
@@ -253,10 +276,19 @@ export type ScreenRecordingFinalizer = Readonly<{
       showTouches: boolean;
       gestureEvents: readonly RecordingGestureEvent[];
       exportQuality?: RecordingExportQuality;
+      requestedFps?: number;
       targetLabel: string;
     }>,
     signal?: AbortSignal,
-  ): Promise<Readonly<{ telemetryPath?: string; warning?: string; overlayWarning?: string }>>;
+  ): Promise<
+    Readonly<{
+      telemetryPath?: string;
+      cadence?: ScreenRecordingCadence;
+      supplemental?: RecordingSupplementalStatus;
+      warning?: string;
+      overlayWarning?: string;
+    }>
+  >;
 }>;
 
 /** Destructive output preparation occurs only after package-owned semantic validation. */

@@ -30,13 +30,24 @@ export const simulator = Object.freeze({
 });
 
 export const runnerOwnership = Object.freeze({
-  runnerSessionId: 'runner-session',
   runnerAuthority: 'local-lease' as const,
+  recordingAuthority: Object.freeze({
+    runnerSessionId: 'runner-session',
+    startCommandId: 'record-start-1',
+    launchIdentity: Object.freeze({
+      selectorFingerprint: 'test-runner-selector',
+      testHostContainerBundleId: 'com.example.AgentDeviceRunnerUITests.xctrunner',
+    }),
+  }),
+  startState: 'active' as const,
 });
 
 export const coreDeviceRunnerStart = Object.freeze({
   ...runnerOwnership,
-  remotePath: 'tmp/agent-device-recording-123.mp4',
+  recordingAuthority: Object.freeze({
+    ...runnerOwnership.recordingAuthority,
+    remotePath: 'tmp/agent-device-recording-123.mp4',
+  }),
 });
 
 export const processIdentity = Object.freeze({

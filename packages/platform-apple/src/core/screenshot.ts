@@ -21,11 +21,8 @@ import {
   IOS_SIMULATOR_SCREENSHOT_SCALE_TIMEOUT_MS,
   IOS_SIMULATOR_SCREENSHOT_TIMEOUT_MS,
 } from './config.ts';
-import { runAppleRunnerCommand } from './runner-client.ts';
-import {
-  IOS_RUNNER_CONTAINER_BUNDLE_IDS,
-  type AppleRunnerCommandOptions,
-} from '../runner/index.ts';
+import { runAppleRunnerCommandWithReceipt } from './runner-client.ts';
+import { type AppleRunnerCommandOptions } from '../runner/index.ts';
 import { prepareSimulatorStatusBarForScreenshot } from './screenshot-status-bar.ts';
 import {
   appleSimulatorDisplayArgvFragment,
@@ -91,7 +88,7 @@ const defaultSimulatorScreenshotFlowDeps: SimulatorScreenshotFlowDeps = {
 };
 
 const iosSimulatorMainScreenScaleCache = new Map<string, number>();
-const iosSimulatorRunnerContainerCache = new Map<string, string>();
+import { runnerSimulatorContainerCache as iosSimulatorRunnerContainerCache } from '../runner/runner-session-registry.ts';
 
 export async function screenshotIos(
   device: DeviceInfo,
@@ -116,7 +113,7 @@ export async function screenshotIos(
     appBundleId: options.appBundleId,
     fullscreen: options.fullscreen,
     runnerOptions: options.runnerOptions,
-    runRunnerCommand: runAppleRunnerCommand,
+    runRunnerCommandWithReceipt: runAppleRunnerCommandWithReceipt,
   });
   return {};
 }
@@ -243,12 +240,12 @@ export async function captureScreenshotViaRunner(
       fullscreen,
       runnerOptions,
       preferRunner: true,
-      runRunnerCommand: runAppleRunnerCommand,
+      runRunnerCommandWithReceipt: runAppleRunnerCommandWithReceipt,
     });
     return undefined;
   }
 
-  const result = await runAppleRunnerCommand(
+  const execution = await runAppleRunnerCommandWithReceipt(
     device,
     {
       command: 'screenshot',
@@ -258,6 +255,7 @@ export async function captureScreenshotViaRunner(
     },
     runnerOptions,
   );
+  const result = execution.data;
   const remoteFileName = result['message'] as string;
   if (!remoteFileName) {
     throw new AppError(
@@ -273,7 +271,7 @@ export async function captureScreenshotViaRunner(
   }
 
   if (device.kind === 'simulator') {
-    await copyRunnerScreenshotFromSimulator(device, remoteFileName, outPath);
+    await copyRunnerScreenshotFromSimulator(device, remoteFileName, outPath, execution.receipt);
     return metadata;
   }
   throw new AppError('COMMAND_FAILED', 'Unsupported Apple screenshot target');
@@ -283,10 +281,12 @@ async function copyRunnerScreenshotFromSimulator(
   device: DeviceInfo,
   remoteFileName: string,
   outPath: string,
+  receipt: import('../runner/runner-session-types.ts').RunnerExecutionReceipt,
 ): Promise<void> {
   const deadline = Deadline.fromTimeoutMs(IOS_RUNNER_SCREENSHOT_COPY_TIMEOUT_MS);
   let lastError = 'Unable to locate runner container for simulator screenshot';
-  const cachedContainerPath = iosSimulatorRunnerContainerCache.get(device.id);
+  const cacheKey = `${device.id}:${receipt.runnerSessionId}`;
+  const cachedContainerPath = iosSimulatorRunnerContainerCache.get(cacheKey);
   if (cachedContainerPath) {
     const cachedCopy = await tryCopySimulatorRunnerScreenshot(
       cachedContainerPath,
@@ -295,9 +295,9 @@ async function copyRunnerScreenshotFromSimulator(
     );
     if (cachedCopy.copied) return;
     lastError = cachedCopy.error;
-    iosSimulatorRunnerContainerCache.delete(device.id);
+    iosSimulatorRunnerContainerCache.delete(cacheKey);
   }
-  for (const bundleId of IOS_RUNNER_CONTAINER_BUNDLE_IDS) {
+  for (const bundleId of [receipt.launchIdentity.testHostContainerBundleId]) {
     const containerResult = await runSimctlForDevice(
       device,
       ['get_app_container', device.id, bundleId, 'data'],
@@ -324,7 +324,7 @@ async function copyRunnerScreenshotFromSimulator(
     }
     const copy = await tryCopySimulatorRunnerScreenshot(containerPath, remoteFileName, outPath);
     if (copy.copied) {
-      iosSimulatorRunnerContainerCache.set(device.id, containerPath);
+      iosSimulatorRunnerContainerCache.set(cacheKey, containerPath);
       return;
     }
     lastError = copy.error;

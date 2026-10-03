@@ -1,3 +1,8 @@
+import {
+  createRunnerListenerReadySignal,
+  settledRunnerListenerReadiness,
+} from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import { afterEach, beforeEach, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import type { ExecBackgroundResult } from '@agent-device/host-kit/command';
@@ -197,18 +202,18 @@ test('waitForRunner discloses unknown when an attempt may have written before a 
 
 test('waitForRunner wakes a simulator startup retry when the listener reports ready', async () => {
   vi.useFakeTimers();
-  const readiness = new AbortController();
+  const readiness = createRunnerListenerReadySignal();
   const session: RunnerSession = {
     ...makeReadyRunnerSession(),
     state: 'starting',
-    startupRetryWake: readiness.signal,
+    startupRetryWake: readiness.wake,
+    listenerReadiness: readiness,
   };
   let fetchAttempts = 0;
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => {
       fetchAttempts += 1;
-      if (fetchAttempts === 1) throw new Error('ECONNREFUSED');
       return new Response('{}');
     }),
   );
@@ -224,10 +229,10 @@ test('waitForRunner wakes a simulator startup retry when the listener reports re
   try {
     await Promise.resolve();
     await Promise.resolve();
-    assert.equal(fetchAttempts, 1);
-    readiness.abort();
+    assert.equal(fetchAttempts, 0);
+    readiness.observe('AGENT_DEVICE_RUNNER_LISTENER_READY');
     assert.equal((await response).status, 200);
-    assert.equal(fetchAttempts, 2);
+    assert.equal(fetchAttempts, 1);
   } finally {
     await vi.runAllTimersAsync();
     vi.useRealTimers();
@@ -276,12 +281,15 @@ test('waitForRunner preserves xcodebuild diagnostics when the runner exits durin
     'The application could not be launched because the Developer App Certificate is not trusted.\n',
   );
   const session: RunnerSession = {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: 'starting-device-session',
     device: xctestIosDevice,
     deviceId: xctestIosDevice.id,
     port: 8100,
     xctestrunPath: '/tmp/runner.xctestrun',
-    jsonPath: '/tmp/runner.json',
+    ownedEnvironmentFiles: ['/tmp/runner.xctestrun', '/tmp/runner.json'],
     runnerLogPath,
     readLogTail: (maxBytes) =>
       readRunnerLogTail({ logPath: runnerLogPath, startOffset: 0 }, maxBytes),
@@ -321,12 +329,15 @@ test('waitForRunner carries the disk-image state when the runner is still alive 
   // The alive-child twin of the early exit: `xcodebuild` never exits, the runner never answers, and
   // the failure a locked phone produces this way must still say what the phone reported.
   const session: RunnerSession = {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: 'starting-device-session',
     device: xctestIosDevice,
     deviceId: xctestIosDevice.id,
     port: 8100,
     xctestrunPath: '/tmp/runner.xctestrun',
-    jsonPath: '/tmp/runner.json',
+    ownedEnvironmentFiles: ['/tmp/runner.xctestrun', '/tmp/runner.json'],
     testPromise: new Promise(() => {}),
     child: { pid: 1234, exitCode: null } as ExecBackgroundResult['child'],
     state: 'starting',
@@ -366,7 +377,7 @@ test('waitForRunner reports the usbmux verdict for xctest devices without retryi
     () => waitForRunner(xctestIosDevice, 8100, { command: 'snapshot' }, undefined, 5_000),
     (error: unknown) => {
       const appError = error as AppError;
-      assert.equal(appError.code, 'DEVICE_NOT_FOUND');
+      assert.equal(appError.code, 'DEVICE_NOT_FOUND', String(appError));
       assert.match(String(appError.details?.hint), /Connect the device by cable/);
       assert.equal(appError.message.includes('Runner did not accept connection'), false);
       return true;
@@ -405,12 +416,15 @@ test('waitForRunner falls back to the tunnel route inside the same attempt', asy
 
 function makeReadyRunnerSession(): RunnerSession {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: 'ready-session',
     device: iosSimulator,
     deviceId: iosSimulator.id,
     port: 8100,
     xctestrunPath: '/tmp/runner.xctestrun',
-    jsonPath: '/tmp/runner.json',
+    ownedEnvironmentFiles: ['/tmp/runner.xctestrun', '/tmp/runner.json'],
     testPromise: Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
     child: { pid: 1234, exitCode: null } as ExecBackgroundResult['child'],
     state: 'ready',

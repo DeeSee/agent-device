@@ -7,16 +7,25 @@ export {
   type RunnerXctestrunArtifact,
   type RunnerXctestrunArtifactState,
 } from './runner-artifact.ts';
+export type { RunnerLaunchIdentity, RunnerLaunchSelection } from './runner-launch-identity.ts';
+export async function resolveRunnerLaunchSelection(
+  ...args: Parameters<typeof import('./runner-launch-identity.ts').resolveRunnerLaunchSelection>
+): Promise<
+  Awaited<ReturnType<typeof import('./runner-launch-identity.ts').resolveRunnerLaunchSelection>>
+> {
+  const { resolveRunnerLaunchSelection: resolve } = await import('./runner-launch-identity.ts');
+  return await resolve(...args);
+}
 export {
   markRunnerXctestrunArtifactBadForRun,
   type RunnerXctestrunCacheKind,
 } from './runner-cache.ts';
 export {
   createRunnerPhaseBudget,
-  IOS_RUNNER_CONTAINER_BUNDLE_IDS,
   requireRunnerPhaseRemainingMs,
   resolveExpectedRunnerCacheMetadata,
   resolveRunnerAppBundleId,
+  resolveRunnerTestHostBundleId,
   resolveRunnerDerivedPath,
   type RunnerPhaseBudget,
 } from './runner-cache-metadata.ts';

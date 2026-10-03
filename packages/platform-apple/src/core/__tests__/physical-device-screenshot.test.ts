@@ -1,3 +1,4 @@
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from '../../runner/__tests__/runner-identity-fixtures.ts';
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { IOS_DEVICE } from '../../__tests__/device-fixtures.ts';
@@ -20,7 +21,7 @@ test('captureCoreDeviceScreenshot invokes devicectl with the current capture-scr
     }),
     async () =>
       await captureCoreDeviceScreenshot(IOS_DEVICE, '/tmp/out.png', {
-        runRunnerCommand: async () => {
+        runRunnerCommandWithReceipt: async () => {
           throw new Error('devicectl capture should have succeeded without a runner fallback');
         },
       }),
@@ -72,9 +73,15 @@ test('captureCoreDeviceScreenshot caches a recognized unsupported devicectl scre
     }),
     async () => {
       const options = {
-        runRunnerCommand: async () => {
+        runRunnerCommandWithReceipt: async () => {
           runnerCalls += 1;
-          return { message: 'tmp/runner-screenshot.png' };
+          return {
+            data: { message: 'tmp/runner-screenshot.png' },
+            receipt: {
+              runnerSessionId: 'fixture-session',
+              launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+            },
+          };
         },
       };
       await captureCoreDeviceScreenshot(IOS_DEVICE, '/tmp/first.png', options);

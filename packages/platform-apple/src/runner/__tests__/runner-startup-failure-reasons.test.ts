@@ -61,6 +61,7 @@ const MESSAGE_FOR_FIXTURE: Readonly<Record<string, string>> = {
  * parentheses in it is not this suite's job.
  */
 const HINT_FOR_REASON: Record<RunnerStartupFailureReason, string> = {
+  runner_artifact_product_missing: 'complete runner artifact',
   bundle_identifier_already_registered: 'AGENT_DEVICE_IOS_BUNDLE_ID',
   signing_no_development_team: 'AGENT_DEVICE_IOS_TEAM_ID',
   signing_provisioning_profile_missing: 'AGENT_DEVICE_IOS_PROVISIONING_PROFILE',

@@ -92,7 +92,11 @@ final class RunnerTests: XCTestCase {
   /// a caller that already spent that gap elsewhere (an agent's round trip is 190-260 ms)
   /// has satisfied it and waits for nothing. `nil` = no activation is pending stabilization.
   var firstInteractionReadyUptime: TimeInterval?
-  var activeRecording: ScreenRecorder?
+  struct ActiveRecording {
+    let recorder: ScreenRecorder
+    let startCommandId: String
+  }
+  var activeRecording: ActiveRecording?
   let commandJournal = RunnerCommandJournal()
   // Coalesces duplicate transport sends of the same commandId onto the single in-flight
   // execution instead of enqueueing them again behind it (#1105 capture pileup).

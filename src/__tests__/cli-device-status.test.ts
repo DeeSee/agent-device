@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, vi } from 'vitest';
 import { readCurrentOwnerIdentity } from '@agent-device/host-kit/process';
+import { openDeviceClaimRoot } from '../device-claim-root.ts';
+import { resolveDeviceClaimPath } from '../daemon/device/device-claim-paths.ts';
 import { runCliCapture } from './cli-capture.ts';
 import { publishDaemonRegistration } from './test-utils/device-claim-store.ts';
 import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
@@ -10,6 +12,10 @@ import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
 vi.mock('@agent-device/host-kit/process', async (importOriginal) =>
   (await import('./test-utils/host-process-mock.ts')).pinOwnProcessStartTime(importOriginal),
 );
+
+function claimPath(claimsDir: string, deviceKey: string): string {
+  return resolveDeviceClaimPath(deviceKey, openDeviceClaimRoot(claimsDir));
+}
 
 test('device status is daemonless and does not send a daemon request', async () => {
   const result = await runCliCapture(['device', 'status', '--json']);
@@ -24,7 +30,7 @@ test('keeps normal status compact while retaining proven-stale claims for explic
   const owner = readCurrentOwnerIdentity();
   try {
     fs.writeFileSync(
-      path.join(claimsDir, 'live.json'),
+      claimPath(claimsDir, 'local:android:none:live'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:android:none:live',
@@ -40,7 +46,7 @@ test('keeps normal status compact while retaining proven-stale claims for explic
       }),
     );
     fs.writeFileSync(
-      path.join(claimsDir, 'stale.json'),
+      claimPath(claimsDir, 'local:android:none:stale'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:android:none:stale',
@@ -99,9 +105,10 @@ test('keeps corrupt claims visible and requires --stale for uncertain reclaimabl
   const claimsDir = mkdtempForTestSync('agent-device-cli-claims-');
   const owner = readCurrentOwnerIdentity();
   try {
-    fs.writeFileSync(path.join(claimsDir, 'corrupt.json'), '{bad json');
+    const corruptPath = claimPath(claimsDir, 'local:android:none:corrupt');
+    fs.writeFileSync(corruptPath, '{bad json');
     fs.writeFileSync(
-      path.join(claimsDir, 'state-dir-gone.json'),
+      claimPath(claimsDir, 'local:android:none:state-dir-gone'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:android:none:state-dir-gone',
@@ -122,7 +129,7 @@ test('keeps corrupt claims visible and requires --stale for uncertain reclaimabl
       }),
     );
     fs.writeFileSync(
-      path.join(claimsDir, 'pid-reused.json'),
+      claimPath(claimsDir, 'local:android:none:pid-reused'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:android:none:pid-reused',
@@ -146,7 +153,7 @@ test('keeps corrupt claims visible and requires --stale for uncertain reclaimabl
     const normal = await runCliCapture(['device', 'status'], {
       env: { AGENT_DEVICE_CLAIMS_DIR: claimsDir },
     });
-    assert.match(normal.stdout, /corrupt.json: inconsistent/);
+    assert.match(normal.stdout, new RegExp(`${path.basename(corruptPath)}: inconsistent`, 'u'));
     assert.doesNotMatch(normal.stdout, /State-dir-gone Pixel/);
     assert.doesNotMatch(normal.stdout, /PID-reused Pixel/);
     assert.match(normal.stdout, /2 stale claims hidden/);
@@ -167,7 +174,7 @@ test('states that nothing is claimed when every claim is stale', async () => {
   const claimsDir = mkdtempForTestSync('agent-device-cli-claims-');
   try {
     fs.writeFileSync(
-      path.join(claimsDir, 'stale.json'),
+      claimPath(claimsDir, 'local:apple:ios:stale-phone'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:apple:ios:stale-phone',
@@ -203,7 +210,7 @@ test('names a replaced-but-running daemon owner as stale rather than a live hold
     // its state dir, so its session is one `session list` cannot report.
     publishDaemonRegistration(stateDir, readCurrentOwnerIdentity());
     fs.writeFileSync(
-      path.join(claimsDir, 'superseded.json'),
+      claimPath(claimsDir, 'local:web:none:agent-browser-chrome'),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: 'local:web:none:agent-browser-chrome',
@@ -246,7 +253,7 @@ test('device status shows an allocator-held claim in the normal view, never as s
   const claimsDir = mkdtempForTestSync('agent-device-cli-claims-');
   try {
     fs.writeFileSync(
-      path.join(claimsDir, 'allocator.json'),
+      claimPath(claimsDir, 'local:android:none:managed-5554'),
       JSON.stringify({
         schemaVersion: 3,
         kind: 'allocator',

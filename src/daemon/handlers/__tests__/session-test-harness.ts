@@ -41,6 +41,11 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
   return {
     ...actual,
     prepareIosRunner: vi.fn(async () => ({
+      runnerSessionId: 'test-runner-session',
+      launchIdentity: {
+        selectorFingerprint: 'test-selector',
+        testHostContainerBundleId: 'com.example.runner.xctrunner',
+      },
       runner: { currentUptimeMs: 42 },
       connectMs: 3,
       healthCheckMs: 3,
@@ -157,6 +162,11 @@ beforeEach(() => {
   mockPrewarmAppleRunnerCache.mockReset();
   mockPrepareIosRunner.mockReset();
   mockPrepareIosRunner.mockResolvedValue({
+    runnerSessionId: 'test-runner-session',
+    launchIdentity: {
+      selectorFingerprint: 'test-selector',
+      testHostContainerBundleId: 'com.example.runner.xctrunner',
+    },
     runner: { currentUptimeMs: 42 },
     connectMs: 3,
     healthCheckMs: 3,

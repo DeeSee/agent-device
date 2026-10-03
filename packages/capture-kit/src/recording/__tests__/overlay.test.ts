@@ -25,12 +25,20 @@ vi.mock('@agent-device/host-kit/command', async (importOriginal) => {
 
 vi.mock('../video.ts', () => ({
   waitForStableFile: vi.fn(async () => {}),
-  waitForPlayableVideo: vi.fn(async () => {}),
+  waitForPlayableVideo: vi.fn(async () => ({
+    status: 'measured' as const,
+    source: 'media-pts' as const,
+    sampleCount: 1,
+    mediaDurationMs: 0,
+    firstPtsMs: 0,
+    lastPtsMs: 0,
+  })),
 }));
 
 import { overlayRecordingTouches } from '../overlay.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import { runCmd } from '@agent-device/host-kit/command';
+import { waitForPlayableVideo } from '../video.ts';
 
 function helperScriptArgs(): string[] {
   const helperCall = mockRunCmd.mock.calls.find(([cmd]) => cmd !== 'xcrun');
@@ -38,6 +46,7 @@ function helperScriptArgs(): string[] {
 }
 
 const mockRunCmd = vi.mocked(runCmd);
+const mockWaitForPlayableVideo = vi.mocked(waitForPlayableVideo);
 
 let tmpDir: string;
 
@@ -103,6 +112,60 @@ test('overlay preserves Swift helper compile hints', async () => {
       hint,
     },
   });
+});
+
+test('overlay preserves the raw input when the derivative is not playable', async () => {
+  const videoPath = path.join(tmpDir, 'recording.mp4');
+  const telemetryPath = path.join(tmpDir, 'recording.gesture-telemetry.json');
+  fs.writeFileSync(videoPath, 'original');
+  fs.writeFileSync(telemetryPath, '{"events":[]}');
+  mockWaitForPlayableVideo
+    .mockResolvedValueOnce({
+      status: 'measured',
+      source: 'media-pts',
+      sampleCount: 1,
+      mediaDurationMs: 0,
+      firstPtsMs: 0,
+      lastPtsMs: 0,
+    })
+    .mockResolvedValueOnce({
+      status: 'invalid',
+      source: 'media-pts',
+      reason: 'unplayable-or-duration-invalid',
+    });
+
+  await expect(overlayRecordingTouches({ videoPath, telemetryPath })).rejects.toThrow(
+    'Failed to add touch overlays to the recording',
+  );
+  expect(fs.readFileSync(videoPath, 'utf8')).toBe('original');
+  expect(fs.readdirSync(tmpDir).filter((entry) => entry.includes('.agent-device-'))).toEqual([]);
+});
+
+test('overlay preserves the raw input when derivative validation is unavailable', async () => {
+  const videoPath = path.join(tmpDir, 'recording.mp4');
+  const telemetryPath = path.join(tmpDir, 'recording.gesture-telemetry.json');
+  fs.writeFileSync(videoPath, 'original');
+  fs.writeFileSync(telemetryPath, '{"events":[]}');
+  mockWaitForPlayableVideo
+    .mockResolvedValueOnce({
+      status: 'measured',
+      source: 'media-pts',
+      sampleCount: 1,
+      mediaDurationMs: 0,
+      firstPtsMs: 0,
+      lastPtsMs: 0,
+    })
+    .mockResolvedValueOnce({
+      status: 'unavailable',
+      source: 'media-pts',
+      reason: 'validator-unavailable',
+    });
+
+  await expect(overlayRecordingTouches({ videoPath, telemetryPath })).rejects.toThrow(
+    'Failed to add touch overlays to the recording',
+  );
+  expect(fs.readFileSync(videoPath, 'utf8')).toBe('original');
+  expect(fs.readdirSync(tmpDir).filter((entry) => entry.includes('.agent-device-'))).toEqual([]);
 });
 
 test('overlay defaults to the fast medium export preset', async () => {

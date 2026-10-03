@@ -1,3 +1,7 @@
+import {
+  RUNNER_LAUNCH_IDENTITY_FIXTURE,
+  makeRunnerLaunchSelection,
+} from './runner-identity-fixtures.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -110,13 +114,19 @@ let expectedDerived: string;
 function writeStaleLeaseFor(device: DeviceInfo, overrides: Partial<RunnerLease> = {}): RunnerLease {
   const lease: RunnerLease = {
     ...buildRunnerLease({
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+      artifactSource: 'internal',
+
       device,
       sessionId: `${device.id}:50700:1`,
       runnerPid: 424242,
       port: 50700,
       xctestrunPath: path.join(expectedDerived, 'Build', 'Products', 'env.session.xctestrun'),
       cacheKey: resolveRunnerCacheKey(mockResolveExpectedRunnerCacheMetadata(device)),
-      jsonPath: path.join(expectedDerived, 'Build', 'Products', 'env.session.json'),
+      ownedEnvironmentFiles: [
+        path.join(expectedDerived, 'Build', 'Products', 'env.session.xctestrun'),
+        path.join(expectedDerived, 'Build', 'Products', 'env.session.json'),
+      ],
     }),
     // A pid+start-time that cannot belong to a live process makes the lease
     // owner dead, i.e. the lease classifies as stale.
@@ -167,12 +177,15 @@ test('readStaleRunnerLease returns dead-owner leases and skips owned ones', () =
   // A lease written by this process is owned, not stale.
   writeRunnerLease(
     buildRunnerLease({
+      launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+      artifactSource: 'internal',
+
       device: simulator,
       sessionId: `${simulator.id}:50700:2`,
       runnerPid: 424242,
       port: 50700,
       xctestrunPath: '/tmp/x.xctestrun',
-      jsonPath: '/tmp/x.json',
+      ownedEnvironmentFiles: ['/tmp/x.xctestrun', '/tmp/x.json'],
     }),
   );
   expect(readStaleRunnerLease(simulator.id)).toBeNull();
@@ -188,7 +201,9 @@ test('adoption succeeds for a live, matching, probe-healthy runner', async () =>
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-  const session = await tryAdoptRunnerSessionFromLease(simulator, {});
+  const session = await tryAdoptRunnerSessionFromLease(simulator, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session).not.toBeNull();
   expect(session?.port).toBe(lease.port);
@@ -210,7 +225,9 @@ test('the adopted runner keeps the log file its predecessor opened for it', asyn
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-  const session = await tryAdoptRunnerSessionFromLease(simulator, {});
+  const session = await tryAdoptRunnerSessionFromLease(simulator, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session?.runnerLogPath).toBe(runnerLogPath);
   const restamped = JSON.parse(
@@ -236,6 +253,7 @@ test('a request canceled during the fingerprint probe fails adoption instead of 
 
   await expect(
     tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
       budget: createRunnerPhaseBudget(undefined, request.signal),
     }),
   ).rejects.toSatisfy(isRequestCanceledError);
@@ -263,6 +281,7 @@ test('a request canceled during the fingerprint probe fails adoption instead of 
 
   await expect(
     tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
       budget: createRunnerPhaseBudget(undefined, warmRequest.signal),
     }),
   ).rejects.toSatisfy(isRequestCanceledError);
@@ -278,7 +297,11 @@ test('adoption is skipped for a recycled runner pid (start time mismatch)', asyn
   writeStaleLease({ runnerStartTime: 'runner-original-start' });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -294,7 +317,11 @@ test('adoption is refused when the pid is recycled while the uptime probe is in 
     return new Response(JSON.stringify({ ok: true }));
   });
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   // The stale lease must survive untouched — ownership was never transferred.
   expect(readStaleRunnerLease(simulator.id)?.ownerToken).toBe(lease.ownerToken);
 });
@@ -309,7 +336,11 @@ test('adoption is skipped for a legacy lease whose live pid is not runner-shaped
   mockIsProcessAlive.mockReturnValue(true);
   mockReadProcessCommand.mockReturnValue('node /usr/local/bin/opencode run --model gpt-high');
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -321,7 +352,9 @@ test('adoption accepts a legacy lease whose live pid is runner-shaped', async ()
   );
   mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-  const session = await tryAdoptRunnerSessionFromLease(simulator, {});
+  const session = await tryAdoptRunnerSessionFromLease(simulator, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session?.state).toBe('ready');
   expect(session?.child.pid).toBe(424242);
@@ -333,7 +366,9 @@ test('a runner for a simulator in a custom simulator set is adopted', async () =
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-  const session = await tryAdoptRunnerSessionFromLease(scopedDevice, {});
+  const session = await tryAdoptRunnerSessionFromLease(scopedDevice, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session?.state).toBe('ready');
   expect(session?.device.simulatorSetPath).toBe('/custom/device-set');
@@ -356,7 +391,11 @@ test('a runner leased for the same udid in another simulator set is never adopte
   ] as const) {
     writeStaleLeaseFor(leasedFor);
 
-    expect(await tryAdoptRunnerSessionFromLease(requested, {})).toBeNull();
+    expect(
+      await tryAdoptRunnerSessionFromLease(requested, {
+        requestedSelection: makeRunnerLaunchSelection(),
+      }),
+    ).toBeNull();
     expect(adoptionRefusalReason()).toBe('simulator_set_mismatch');
   }
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
@@ -366,7 +405,11 @@ test('adoption is skipped when the runner process is dead', async () => {
   writeStaleLease();
   mockIsProcessAlive.mockReturnValue(false);
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -374,7 +417,11 @@ test('adoption is skipped on artifact fingerprint mismatch', async () => {
   writeStaleLease({ xctestrunPath: '/somewhere/else/Build/Products/env.xctestrun' });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -383,7 +430,11 @@ test('adoption is skipped when the probe fails', async () => {
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockRejectedValue(new Error('connection refused'));
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
 });
 
 // #2662: the probe decodes through the command path's decoder, so a body that
@@ -394,7 +445,11 @@ test('adoption is skipped when the uptime probe answers a truncated body', async
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response('{"ok":true,"data":{"uptime":'));
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(readStaleRunnerLease(simulator.id)?.ownerToken).toBe(lease.ownerToken);
 });
 
@@ -403,7 +458,11 @@ test('adoption is skipped when the uptime probe answers an ok that is not the bo
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response('{"ok":"true"}'));
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(readStaleRunnerLease(simulator.id)?.ownerToken).toBe(lease.ownerToken);
 });
 
@@ -412,7 +471,11 @@ test('adoption is disabled by the kill switch', async () => {
   mockIsProcessAlive.mockReturnValue(true);
   process.env.AGENT_DEVICE_IOS_RUNNER_DETACH = '0';
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
 });
 
 test('adoption is refused when the owner state dir is gone but the owner process is alive', async () => {
@@ -436,7 +499,11 @@ test('adoption is refused when the owner state dir is gone but the owner process
   mockIsProcessAlive.mockReturnValue(true);
 
   expect(readStaleRunnerLease(simulator.id)).toBeNull();
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -448,7 +515,9 @@ test('physical coredevice lane adopts the detached runner and names its lane', a
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-  const session = await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {});
+  const session = await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+    requestedSelection: makeRunnerLaunchSelection(),
+  });
 
   expect(session?.state).toBe('ready');
   expect(session?.child.pid).toBe(lease.runnerPid);
@@ -464,7 +533,11 @@ test('physical lane refuses the usbmux-only xctest backend before reading anythi
   writeStaleLeaseFor(physicalXctestDevice);
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalXctestDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalXctestDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('xctest_backend');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -472,7 +545,11 @@ test('physical lane refuses the usbmux-only xctest backend before reading anythi
 test('physical lane refuses the macOS host, which is kind device too', async () => {
   const macHost: DeviceInfo = { ...physicalCoreDevice, id: 'host-macos', appleOs: 'macos' };
 
-  expect(await tryAdoptRunnerSessionFromLease(macHost, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(macHost, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('macos_host');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -480,7 +557,11 @@ test('physical lane refuses the macOS host, which is kind device too', async () 
 test('physical refusal matrix: no lease on disk', async () => {
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('lease_absent');
 });
 
@@ -495,7 +576,11 @@ test('physical refusal matrix: the lease is not stale because its owner is alive
   });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('lease_owner_live');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -504,7 +589,11 @@ test('physical refusal matrix: the leased runner pid is dead', async () => {
   writeStaleLeaseFor(physicalCoreDevice);
   mockIsProcessAlive.mockReturnValue(false);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('runner_process_dead');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -513,7 +602,11 @@ test('physical refusal matrix: the leased runner pid was recycled', async () => 
   writeStaleLeaseFor(physicalCoreDevice, { runnerStartTime: 'runner-original-start' });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('runner_pid_recycled');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -524,7 +617,11 @@ test('physical refusal matrix: the artifact fingerprint moved', async () => {
   });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('artifact_fingerprint_mismatch');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -535,6 +632,7 @@ test('physical refusal matrix: the caller expected another runner session', asyn
 
   expect(
     await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
       expectedRunnerSessionId: 'some-other-runner-session',
     }),
   ).toBeNull();
@@ -556,7 +654,11 @@ test('physical refusal matrix: the owner is alive with its owner-state dir gone'
   });
   mockIsProcessAlive.mockReturnValue(true);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionRefusalReason()).toBe('lease_owner_state_dir_gone');
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
@@ -567,7 +669,11 @@ test('physical refusal matrix: an unreachable device spends one probe and its ow
   mockSendRunnerCommandOnce.mockRejectedValue(new Error('connection refused'));
   const lease = readStaleRunnerLease(physicalCoreDevice.id);
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   // One probe, on the lane's cap - which is the whole reason the physical lane needs a bigger cap
   // than the simulator lane: the tunnel address may have to be looked up inside it (#2681).
   expect(adoptionProbeTimeouts()).toEqual([5_000]);
@@ -581,7 +687,11 @@ test('a simulator spends the tight probe cap it spent before #2681', async () =>
   mockIsProcessAlive.mockReturnValue(true);
   mockSendRunnerCommandOnce.mockRejectedValue(new Error('connection refused'));
 
-  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(simulator, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(adoptionProbeTimeouts()).toEqual([500]);
   expect(adoptionProbes()).toEqual(['simulator:500:false']);
 });
@@ -595,6 +705,7 @@ test('the probe spends the startup budget it was handed instead of getting a fre
 
   expect(
     await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
       budget: createRunnerPhaseBudget(1_200, undefined),
     }),
   ).toBeNull();
@@ -611,6 +722,7 @@ test('a budget the fingerprint check already spent refuses adoption instead of p
 
   expect(
     await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
       budget: createRunnerPhaseBudget(0, undefined),
     }),
   ).toBeNull();
@@ -625,7 +737,11 @@ test('the kill switch disables the physical lane too', async () => {
   mockIsProcessAlive.mockReturnValue(true);
   process.env.AGENT_DEVICE_IOS_RUNNER_DETACH = '0';
 
-  expect(await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {})).toBeNull();
+  expect(
+    await tryAdoptRunnerSessionFromLease(physicalCoreDevice, {
+      requestedSelection: makeRunnerLaunchSelection(),
+    }),
+  ).toBeNull();
   expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
 });
 
@@ -636,7 +752,11 @@ test.each([undefined, 'cache-another-xcode'])(
     mockSendRunnerCommandOnce.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
     writeStaleLease({ cacheKey });
 
-    expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+    expect(
+      await tryAdoptRunnerSessionFromLease(simulator, {
+        requestedSelection: makeRunnerLaunchSelection(),
+      }),
+    ).toBeNull();
     expect(adoptionRefusalReason()).toBe('artifact_fingerprint_mismatch');
     expect(mockSendRunnerCommandOnce).not.toHaveBeenCalled();
   },

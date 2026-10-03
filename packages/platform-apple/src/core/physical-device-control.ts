@@ -65,7 +65,9 @@ export type IosPhysicalDeviceControl = IosPhysicalDeviceRunnerControl & {
     device: DeviceInfo,
     remotePath: string,
     outPath: string,
+    testHostContainerBundleId: string,
     timeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<void>;
 };
 

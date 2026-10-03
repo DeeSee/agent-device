@@ -174,6 +174,7 @@ export const RUNNER_STARTUP_FAILURE_REASONS = [
   'bundle_identifier_already_registered',
   'signing_no_development_team',
   'signing_provisioning_profile_missing',
+  'runner_artifact_product_missing',
   'signing_unspecified',
   'devtools_security_developer_mode_disabled',
   'simulator_set_destination_not_found',
@@ -234,6 +235,15 @@ const PROFILE_UNUSABLE: RunnerErrorRule['buildFailure'] = {
  */
 export const RUNNER_ERROR_RULES: readonly RunnerErrorRule[] = [
   {
+    reason: 'runner_artifact_product_missing',
+    verdicts: {},
+    match: { code: 'COMMAND_FAILED', toolTextIncludesAll: ['missing test product at'] },
+    buildFailure: {
+      reason: 'runner_artifact_product_missing',
+      hint: 'The xctestrun references a missing XCTest product. Verify or replace the complete runner artifact.',
+    },
+  },
+  {
     // A mutation that may have run: no axis may resend or restart it, whatever text it carries.
     reason: RUNNER_REPLY_LOST_REASON,
     match: { code: 'COMMAND_FAILED', details: hasRunnerReplyLostReason },
@@ -244,6 +254,14 @@ export const RUNNER_ERROR_RULES: readonly RunnerErrorRule[] = [
       restartBeforeSend: false,
       restartAfterReadinessPreflight: false,
     },
+  },
+  {
+    reason: 'runner_listener_address_in_use',
+    match: {
+      code: 'COMMAND_FAILED',
+      details: (details) => details.reason === 'runner_listener_address_in_use',
+    },
+    verdicts: { retryable: true, connectRetry: false, restartBeforeSend: true },
   },
   {
     reason: 'usbmux_device_unattached',

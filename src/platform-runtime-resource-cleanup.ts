@@ -1,7 +1,7 @@
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { isIosFamily } from '@agent-device/kernel/device';
 import type { PlatformResourceCleanup } from './daemon/platform-resource-cleanup.ts';
-import { emitDiagnostic, type ResourceDiagnostic } from '@agent-device/host-kit/diagnostics';
+import { type ResourceDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { type OwnedProcessRecordStore } from '@agent-device/host-kit/process';
 import { loadAndroidMechanics } from './platform-runtime-android-mechanics.ts';
 
@@ -72,22 +72,8 @@ export const platformResourceCleanup: PlatformResourceCleanup = Object.freeze({
   },
   async cleanupSessionlessExecutionHost(device) {
     if (!isIosFamily(device)) return;
-    const { resolveRunnerAppBundleId, stopIosRunnerSession } =
-      await import('@agent-device/platform-apple/runner/operations');
+    const { stopIosRunnerSession } = await import('@agent-device/platform-apple/runner/operations');
     await stopIosRunnerSession(device.id);
-    const bundleId = await resolveRunnerAppBundleId();
-    const { closeIosApp } = await import('@agent-device/platform-apple/app-lifecycle');
-    await closeIosApp(device, bundleId).catch((error) => {
-      emitDiagnostic({
-        level: 'debug',
-        phase: 'ios_sessionless_runner_host_close_failed',
-        data: {
-          deviceId: device.id,
-          bundleId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-    });
   },
   retainExecutionHostAfterClose(params) {
     return (

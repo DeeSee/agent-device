@@ -44,6 +44,14 @@ export function createDeviceClaimReconciler(params: {
           }
         }
       }
+      if (claim.device.family === 'apple') {
+        const { reconcileLocalAppleRunnerRecordingOrphan } =
+          await import('../../platform-runtime-screen-recording-apple-runner-transport.ts');
+        await reconcileLocalAppleRunnerRecordingOrphan(
+          { ...claim.device, platform: 'apple' },
+          params.scope.signal,
+        );
+      }
       return { status: 'reconciled' };
     } catch (error) {
       emitDiagnostic({

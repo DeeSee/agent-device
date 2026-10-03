@@ -163,6 +163,7 @@ export function serializeCloseResult(
 ): Record<string, unknown> {
   return {
     session: result.session,
+    ...('disposition' in result ? { disposition: result.disposition } : {}),
     ...(result.shutdown ? { shutdown: result.shutdown } : {}),
     ...('provider' in result && result.provider ? { provider: result.provider } : {}),
     ...successText(result.session ? `Closed: ${result.session}` : 'Closed'),

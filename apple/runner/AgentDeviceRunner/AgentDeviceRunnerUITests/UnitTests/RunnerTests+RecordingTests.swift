@@ -7,6 +7,25 @@ import AppKit
 
 extension RunnerTests {
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
+  func testRecordStartConflictHasTypedRunnerError() throws {
+    let originalRecorder = ScreenRecorder(outputPath: "", fps: 30)
+    activeRecording = ActiveRecording(
+      recorder: originalRecorder,
+      startCommandId: "original-recording-start"
+    )
+    defer { activeRecording = nil }
+
+    let json = #"{"command":"recordStart","commandId":"conflicting-recording-start","outPath":"conflict.mp4","appBundleId":"com.example.target"}"#
+    let command = try JSONDecoder().decode(Command.self, from: Data(json.utf8))
+    let response = try execute(command: command)
+
+    XCTAssertFalse(response.ok)
+    XCTAssertEqual(response.error?.code, "RECORDING_ALREADY_ACTIVE")
+    XCTAssertEqual(response.error?.message, "recording already in progress")
+    XCTAssertEqual(activeRecording?.startCommandId, "original-recording-start")
+    XCTAssertTrue(activeRecording?.recorder === originalRecorder)
+  }
+
   func testRecordStopIsIdempotentAfterNativeRecorderAlreadyStopped() throws {
     activeRecording = nil
 
@@ -19,6 +38,30 @@ extension RunnerTests {
       XCTAssertEqual(response.data?.message, "recording already stopped")
       XCTAssertNil(activeRecording)
     }
+  }
+
+  func testRecordStopRejectsStaleRecordingStartAuthority() throws {
+    let recorder = ScreenRecorder(outputPath: "", fps: 30)
+    activeRecording = ActiveRecording(
+      recorder: recorder,
+      startCommandId: "current-recording-start"
+    )
+    defer { activeRecording = nil }
+
+    let staleJson = #"{"command":"recordStop","commandId":"stale-stop","recordingStartCommandId":"stale-recording-start"}"#
+    let staleCommand = try JSONDecoder().decode(Command.self, from: Data(staleJson.utf8))
+    let staleResponse = try execute(command: staleCommand)
+
+    XCTAssertFalse(staleResponse.ok)
+    XCTAssertEqual(staleResponse.error?.code, "RECORDING_AUTHORITY_MISMATCH")
+    XCTAssertEqual(activeRecording?.startCommandId, "current-recording-start")
+
+    let currentJson = #"{"command":"recordStop","commandId":"current-stop","recordingStartCommandId":"current-recording-start"}"#
+    let currentCommand = try JSONDecoder().decode(Command.self, from: Data(currentJson.utf8))
+    let currentResponse = try execute(command: currentCommand)
+
+    XCTAssertTrue(currentResponse.ok)
+    XCTAssertNil(activeRecording)
   }
 
   func testScreenRecorderClampsNonMonotonicFrameTimestamps() {

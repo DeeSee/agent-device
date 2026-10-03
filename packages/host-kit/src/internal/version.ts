@@ -6,8 +6,13 @@ import { createTtlMemo } from '@agent-device/kernel/ttl-memo';
 
 const versionMemo = createTtlMemo<string, string>();
 const projectRootMemo = createTtlMemo<'self', string>();
+declare const __AGENT_DEVICE_VERSION__: string;
 
-export function readVersion(root: string = findProjectRoot()): string {
+export function readVersion(root?: string): string {
+  if (root === undefined && typeof __AGENT_DEVICE_VERSION__ === 'string') {
+    return __AGENT_DEVICE_VERSION__;
+  }
+  root ??= findProjectRoot();
   const memoized = versionMemo.get(root);
   if (memoized !== undefined) return memoized;
 

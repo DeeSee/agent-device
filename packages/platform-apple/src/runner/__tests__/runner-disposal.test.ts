@@ -1,3 +1,5 @@
+import { settledRunnerListenerReadiness } from '../runner-listener-ready.ts';
+import { RUNNER_LAUNCH_IDENTITY_FIXTURE } from './runner-identity-fixtures.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { IOS_SIMULATOR, MACOS_DEVICE, TVOS_SIMULATOR } from './device-fixtures.ts';
 import type { ExecResult } from '@agent-device/host-kit/command';
@@ -75,7 +77,7 @@ test('macOS runner abort waits for XCTest teardown after SIGINT', async () => {
 
   expect(runnerSignals(session)).toEqual(['SIGINT']);
   expect(mockCleanupTempFile).toHaveBeenCalledWith(session.xctestrunPath);
-  expect(mockCleanupTempFile).toHaveBeenCalledWith(session.jsonPath);
+  expect(mockCleanupTempFile).toHaveBeenCalledWith(session.ownedEnvironmentFiles[1]);
 });
 
 test('macOS runner abort stages TERM after the interrupt grace period', async () => {
@@ -248,12 +250,15 @@ function makeRunnerSession(
   overrides: Partial<RunnerSession> = {},
 ): RunnerSession {
   return {
+    launchIdentity: RUNNER_LAUNCH_IDENTITY_FIXTURE,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     sessionId: `${device.id}:8123:test`,
     device,
     deviceId: device.id,
     port: 8123,
     xctestrunPath: `/tmp/${device.id}.xctestrun`,
-    jsonPath: `/tmp/${device.id}.json`,
+    ownedEnvironmentFiles: [`/tmp/${device.id}.xctestrun`, `/tmp/${device.id}.json`],
     testPromise,
     child: { pid: 42, exitCode: null },
     state: 'ready',

@@ -11,7 +11,7 @@ export type RunnerRequestEntry = {
 
 export const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
-const COMMAND_ID_KEYS = ['commandId', 'statusCommandId'];
+const COMMAND_ID_KEYS = ['commandId', 'statusCommandId', 'recordingStartCommandId'];
 
 export function readRunnerRequestFixture(): RunnerRequestEntry[] {
   return JSON.parse(

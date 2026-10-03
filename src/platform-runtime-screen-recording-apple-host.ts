@@ -24,25 +24,37 @@ export function createAppleScreenRecordingHost(): ScreenRecordingRuntimeHost['ap
         await import('./platform-runtime-screen-recording-apple-simulator-host.ts');
       return await terminateAppleSimulatorRecordingProcess(marker);
     },
-    inspectRunner: async (device, runnerSessionId, runnerAuthority) => {
+    inspectRunner: async (device, recordingAuthority, runnerAuthority) => {
       const { inspectAppleRunnerOwnership } =
         await import('./platform-runtime-screen-recording-apple-runner-host.ts');
-      return await inspectAppleRunnerOwnership(device, runnerSessionId, runnerAuthority);
+      return await inspectAppleRunnerOwnership(device, recordingAuthority, runnerAuthority);
     },
-    retrieveRunnerRecording: async (device, remotePath, outputPath, signal) => {
+    retrieveRunnerRecording: async (
+      device,
+      runnerAuthority,
+      recordingAuthority,
+      outputPath,
+      signal,
+    ) => {
       const { retrieveAppleRunnerRecording } =
         await import('./platform-runtime-screen-recording-apple-runner-host.ts');
-      await retrieveAppleRunnerRecording(device, remotePath, outputPath, signal);
+      await retrieveAppleRunnerRecording(
+        device,
+        runnerAuthority,
+        recordingAuthority,
+        outputPath,
+        signal,
+      );
     },
     captureClockAnchor: async (device, appBundleId, signal) => {
       const { captureAppleClockAnchor } =
         await import('./platform-runtime-screen-recording-apple-runner-host.ts');
       return await captureAppleClockAnchor(device, appBundleId, signal);
     },
-    isRunnerBundleId: async (bundleId) => {
+    isRunnerBundleId: async (device, bundleId) => {
       const { isAppleRunnerBundleId } =
         await import('./platform-runtime-screen-recording-apple-runner-host.ts');
-      return await isAppleRunnerBundleId(bundleId);
+      return await isAppleRunnerBundleId(device, bundleId);
     },
   });
 }

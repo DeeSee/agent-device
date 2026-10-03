@@ -154,6 +154,12 @@ async function startRecording(
   const adopted = params.sessionStore.get(params.sessionName)?.screenRecording;
   if (!adopted) throw new TypeError('Screen recording adoption did not publish a live handle');
   const snapshot = adopted.handle.inspect();
+  if (started.recoverableStartFailure) {
+    throw new AppError('COMMAND_FAILED', started.recoverableStartFailure.message, {
+      reason: started.recoverableStartFailure.reason,
+      recordingRecovery: 'stop-or-cleanup-exact-adopted-resource',
+    });
+  }
   recordSessionAction(
     params.sessionStore,
     session,
@@ -205,6 +211,9 @@ function screenRecordingStartInput(
     activeSessionApp: recordingAppIdentity(session),
     exportQuality: prepared.exportQuality,
     fps: prepared.fps,
+    iosXctestrunFile: params.req.flags?.iosXctestrunFile,
+    iosXctestDerivedDataPath: params.req.flags?.iosXctestDerivedDataPath,
+    iosXctestEnvDir: params.req.flags?.iosXctestEnvDir,
     fence,
   };
 }
@@ -229,6 +238,7 @@ async function stopRecording(
         ? {
             completion: await finishLiveScreenRecording({
               intent: 'capture',
+              signal: params.requestScope.signal,
               session,
               sessionName: params.sessionName,
               sessionStore: params.sessionStore,

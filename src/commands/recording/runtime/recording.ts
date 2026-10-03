@@ -11,7 +11,9 @@ import { successText } from '@agent-device/kernel/success-text';
 import { requireIntInRange } from '@agent-device/kernel/validation';
 import {
   recordingQualityInputToExportQuality,
+  type RecordingArtifactPublicationStatus,
   type RecordingExportQuality,
+  type RecordingSupplementalStatus,
 } from '@agent-device/contracts/recording';
 import type {
   BackendResultEnvelope,
@@ -40,6 +42,8 @@ export type RecordingRecordCommandResult = BackendResultVariant<{
   path?: string;
   telemetryPath?: string;
   artifact?: ArtifactDescriptor;
+  supplemental?: RecordingSupplementalStatus;
+  artifactPublication?: RecordingArtifactPublicationStatus;
   warning?: string;
 }>;
 
@@ -72,14 +76,27 @@ export const recordCommand: RuntimeCommand<
       })
     : undefined;
   try {
+    if (action === 'stop' && output && output.publicationFailurePreservesOutput !== true) {
+      throw new AppError(
+        'UNSUPPORTED_OPERATION',
+        'record stop output requires an artifact adapter that preserves raw bytes when publication fails',
+      );
+    }
     const backendOptions = normalizeRecordingOptions(options, output?.path);
     const result = await method.call(
       runtime.backend,
       toBackendContext(runtime, options),
       backendOptions,
     );
-    const artifact = await output?.publish();
-    return formatRecordingResult(action, result, artifact);
+    let artifact: ArtifactDescriptor | undefined;
+    let artifactPublication: RecordingArtifactPublicationStatus | undefined;
+    try {
+      artifact = await output?.publish();
+    } catch (error) {
+      if (action !== 'stop') throw error;
+      artifactPublication = { status: 'unavailable', reason: 'adapter-failed' };
+    }
+    return formatRecordingResult(action, result, artifact, artifactPublication);
   } catch (error) {
     await output?.cleanup?.();
     throw error;
@@ -159,10 +176,13 @@ function formatRecordingResult(
   action: 'start' | 'stop',
   result: BackendRecordingResult,
   artifact: ArtifactDescriptor | undefined,
+  artifactPublication?: RecordingArtifactPublicationStatus,
 ): RecordingRecordCommandResult {
   return {
     ...(typeof result.path === 'string' ? { path: result.path } : {}),
     ...(typeof result.telemetryPath === 'string' ? { telemetryPath: result.telemetryPath } : {}),
+    ...(result.supplemental ? { supplemental: result.supplemental } : {}),
+    ...(artifactPublication ? { artifactPublication } : {}),
     ...(typeof result.warning === 'string' ? { warning: result.warning } : {}),
     ...formatLifecycleResult(action, result, artifact, {
       startKind: 'recordingStarted',

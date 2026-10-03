@@ -88,7 +88,9 @@ export async function compileSwiftSourceFile(params: {
   extraSourcePaths?: string[];
   cacheName?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<string> {
+  params.signal?.throwIfAborted();
   const sourcePaths = [params.sourcePath, ...(params.extraSourcePaths ?? [])];
   const sources = sourcePaths.map((sourcePath) => ({
     sourcePath,
@@ -113,6 +115,7 @@ export async function compileSwiftSourceFile(params: {
     sourcePaths,
     executablePath,
     timeoutMs: params.timeoutMs,
+    signal: params.signal,
   });
   return executablePath;
 }
@@ -121,6 +124,7 @@ export async function compileSwiftSourceText(params: {
   source: string;
   cacheName: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<string> {
   const cacheName = sanitizeCacheName(params.cacheName);
   const key = hashParts([SWIFT_CACHE_VERSION, process.platform, process.arch, params.source]);
@@ -132,6 +136,7 @@ export async function compileSwiftSourceText(params: {
     executablePath,
     sourceText: params.source,
     timeoutMs: params.timeoutMs,
+    signal: params.signal,
   });
   return executablePath;
 }
@@ -149,7 +154,9 @@ async function ensureSwiftExecutable(params: {
   executablePath: string;
   sourceText?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<void> {
+  params.signal?.throwIfAborted();
   if (isExecutableFile(params.executablePath)) {
     return;
   }
@@ -158,7 +165,7 @@ async function ensureSwiftExecutable(params: {
   fs.mkdirSync(executableDir, { recursive: true });
   const timeoutMs = params.timeoutMs ?? 120_000;
   await withProcessLock({
-    acquire: () => acquireSwiftCacheLock(`${params.executablePath}.lock`, timeoutMs),
+    acquire: () => acquireSwiftCacheLock(`${params.executablePath}.lock`, timeoutMs, params.signal),
     task: async () => {
       // Another process may have published the executable while this one waited for the lock.
       if (isExecutableFile(params.executablePath)) {
@@ -181,7 +188,9 @@ async function ensureSwiftExecutable(params: {
         await runCmd('xcrun', ['swiftc', ...params.sourcePaths, '-o', tempExecutablePath], {
           timeoutMs,
           env: buildSwiftToolEnv(),
+          signal: params.signal,
         });
+        params.signal?.throwIfAborted();
         fs.renameSync(tempExecutablePath, params.executablePath);
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -193,6 +202,7 @@ async function ensureSwiftExecutable(params: {
 async function acquireSwiftCacheLock(
   lockDir: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<ProcessLockRelease> {
   try {
     return await acquireProcessLock({
@@ -206,6 +216,7 @@ async function acquireSwiftCacheLock(
       pollMs: LOCK_RETRY_DELAY_MS,
       ownerGraceMs: timeoutMs,
       description: `Swift cache lock: ${lockDir} (${timeoutMs}ms)`,
+      signal,
     });
   } catch (error) {
     if (

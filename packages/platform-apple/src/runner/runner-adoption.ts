@@ -1,8 +1,16 @@
+import type { RunnerLaunchSelection } from './runner-launch-identity.ts';
+import {
+  sameRunnerLaunchIdentity,
+  RunnerCommandAccounting,
+  type RunnerProcessHandle,
+  type RunnerSession,
+} from './runner-session-types.ts';
+import { settledRunnerListenerReadiness } from './runner-listener-ready.ts';
 import path from 'node:path';
 import { emitDiagnostic, isProcessAlive, parseBooleanLiteral } from './host.ts';
 import type { ExecResult } from '@agent-device/host-kit/command';
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import { isRequestCanceledError } from '@agent-device/kernel/errors';
+import { isRequestCanceledError, AppError } from '@agent-device/kernel/errors';
 import {
   resolveRunnerHandoffTarget,
   type RunnerHandoffLane,
@@ -31,11 +39,6 @@ import {
   type RunnerXctestrunArtifact,
 } from './runner-xctestrun.ts';
 import { resolveRunnerCacheKey } from './runner-cache-metadata.ts';
-import {
-  RunnerCommandAccounting,
-  type RunnerProcessHandle,
-  type RunnerSession,
-} from './runner-session-types.ts';
 
 // A healthy localhost runner answers uptime in tens of milliseconds and a dead
 // port refuses immediately; the timeout only bounds the wedged-runner case,
@@ -61,6 +64,8 @@ export function isIosRunnerDetachEnabled(env: NodeJS.ProcessEnv = process.env): 
 type RunnerAdoptionRefusal =
   | RunnerHandoffRefusal
   | 'lease_absent'
+  | 'external_artifact_not_adoptable'
+  | 'artifact_selector_mismatch'
   | RunnerLeaseAdoptionRefusal
   /** The leased runner serves a simulator with this udid in another simulator set. */
   | 'simulator_set_mismatch'
@@ -90,6 +95,7 @@ export async function tryAdoptRunnerSessionFromLease(
      * cancellation reaches those probes, and the adopted session inherits the rest (#2422).
      */
     budget?: RunnerPhaseBudget;
+    requestedSelection: RunnerLaunchSelection;
     expectedRunnerSessionId?: string;
   },
 ): Promise<RunnerSession | null> {
@@ -114,6 +120,16 @@ export async function tryAdoptRunnerSessionFromLease(
   if (leaseVerdict.type === 'absent') return skip('lease_absent');
   if (leaseVerdict.type === 'refused') return skip(leaseVerdict.reason, leaseVerdict.lease);
   const lease = leaseVerdict.lease;
+  if (lease.recordingPin)
+    throw new AppError('COMMAND_FAILED', 'The runner lease is pinned by an unfinished recording', {
+      reason: 'runner_session_pinned',
+      sessionId: lease.sessionId,
+      recordingState: lease.recordingPin.state,
+    });
+  if (options.requestedSelection.source === 'external' || lease.artifactSource !== 'internal')
+    return skip('external_artifact_not_adoptable', lease);
+  if (!sameRunnerLaunchIdentity(lease.launchIdentity, options.requestedSelection.identity))
+    return skip('artifact_selector_mismatch', lease);
   if (lease.simulatorSetPath !== runnerSimulatorSetPath(device)) {
     return skip('simulator_set_mismatch', lease);
   }
@@ -146,6 +162,9 @@ export async function tryAdoptRunnerSessionFromLease(
       lane: target.lane,
       sessionId: session.sessionId,
       runnerPid,
+      launchIdentity: lease.launchIdentity,
+      ownedEnvironmentFiles: lease.ownedEnvironmentFiles,
+      artifactSource: lease.artifactSource,
       port: lease.port,
       previousOwnerPid: lease.ownerPid,
     },
@@ -287,6 +306,7 @@ function buildAdoptedRunnerSession(
   const artifact: RunnerXctestrunArtifact = {
     xctestrunPath: lease.xctestrunPath,
     ...expectedArtifact,
+    launchIdentity: lease.launchIdentity,
     cache: 'exact',
     artifact: 'valid',
     buildMs: 0,
@@ -301,7 +321,10 @@ function buildAdoptedRunnerSession(
     port: lease.port,
     xctestrunPath: lease.xctestrunPath,
     xctestrunArtifact: artifact,
-    jsonPath: lease.jsonPath,
+    launchIdentity: lease.launchIdentity,
+    ownedEnvironmentFiles: lease.ownedEnvironmentFiles,
+    listenerReadiness: settledRunnerListenerReadiness('ready'),
+
     testPromise: wait,
     child,
     // The runner appends to this file for its whole life, so the log the previous daemon handed over
@@ -314,10 +337,13 @@ function buildAdoptedRunnerSession(
       device,
       sessionId,
       runnerPid,
+      launchIdentity: lease.launchIdentity,
+      ownedEnvironmentFiles: lease.ownedEnvironmentFiles,
+      artifactSource: lease.artifactSource,
       port: lease.port,
       xctestrunPath: lease.xctestrunPath,
       cacheKey: expectedArtifact.cacheKey,
-      jsonPath: lease.jsonPath,
+
       runnerLogPath: lease.runnerLogPath,
     }),
   };

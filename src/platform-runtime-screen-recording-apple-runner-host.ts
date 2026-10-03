@@ -1,4 +1,8 @@
-import type { AppleScreenRecordingRunnerRequest } from '@agent-device/contracts/screen-recording-runtime-host';
+import { loadAppleRunnerRecordingOperations } from '@agent-device/platform-apple/runner/recording';
+import type {
+  AppleRunnerRecordingAuthority,
+  AppleScreenRecordingRunnerRequest,
+} from '@agent-device/contracts/screen-recording-runtime-host';
 import type { ManagedProcessOwnership } from '@agent-device/contracts/platform-runtime-host';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 
@@ -10,13 +14,24 @@ export async function runAppleRecordingRunner(
   const { resolveAppleRunnerScreenRecordingTransport } =
     await import('./platform-runtime-screen-recording-apple-runner-transport.ts');
   const transport = resolveAppleRunnerScreenRecordingTransport();
+  if (request.kind === 'release') {
+    if (transport.authority !== request.runnerAuthority) {
+      throw new Error('Apple runner recording ownership changed before release');
+    }
+    await transport.release({
+      device,
+      recordingAuthority: request.recordingAuthority,
+      reason: request.reason,
+    });
+    return {};
+  }
   if (request.kind === 'stop') {
     if (transport.authority !== request.runnerAuthority) {
       throw new Error('Apple runner recording ownership changed before cleanup');
     }
     await transport.stop({
       device,
-      runnerSessionId: request.runnerSessionId,
+      recordingAuthority: request.recordingAuthority,
       appBundleId: request.appBundleId,
       signal,
     });
@@ -28,11 +43,14 @@ export async function runAppleRecordingRunner(
     outputPath: request.outputPath,
     fps: request.fps,
     signal,
+    iosXctestrunFile: request.iosXctestrunFile,
+    iosXctestDerivedDataPath: request.iosXctestDerivedDataPath,
+    iosXctestEnvDir: request.iosXctestEnvDir,
   });
   return Object.freeze({
-    runnerSessionId: result.runnerSessionId,
     runnerAuthority: transport.authority,
-    ...(result.remotePath === undefined ? {} : { remotePath: result.remotePath }),
+    recordingAuthority: result.recordingAuthority,
+    startState: result.startState,
     ...(typeof result.recorderStartUptimeMs === 'number'
       ? { recorderStartUptimeMs: result.recorderStartUptimeMs }
       : {}),
@@ -41,29 +59,32 @@ export async function runAppleRecordingRunner(
 
 export async function inspectAppleRunnerOwnership(
   device: DeviceInfo,
-  runnerSessionId: string,
+  recordingAuthority: AppleRunnerRecordingAuthority,
   runnerAuthority: 'local-lease' | 'scoped-provider',
 ): Promise<ManagedProcessOwnership> {
   const { resolveAppleRunnerScreenRecordingTransport } =
     await import('./platform-runtime-screen-recording-apple-runner-transport.ts');
   const transport = resolveAppleRunnerScreenRecordingTransport();
   return transport.authority === runnerAuthority
-    ? await transport.inspect(device, runnerSessionId)
+    ? await transport.inspect(device, recordingAuthority)
     : 'ownership-lost';
 }
 
 export async function retrieveAppleRunnerRecording(
   device: DeviceInfo,
-  remotePath: string,
+  runnerAuthority: 'local-lease' | 'scoped-provider',
+  recordingAuthority: AppleRunnerRecordingAuthority,
   outputPath: string,
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  const { resolveIosPhysicalDeviceControl } =
-    await import('@agent-device/platform-apple/physical-device');
-  const control = resolveIosPhysicalDeviceControl(device);
-  await control.copyRunnerFile(device, remotePath, outputPath);
-  signal?.throwIfAborted();
+  const { resolveAppleRunnerScreenRecordingTransport } =
+    await import('./platform-runtime-screen-recording-apple-runner-transport.ts');
+  const transport = resolveAppleRunnerScreenRecordingTransport();
+  if (transport.authority !== runnerAuthority) {
+    throw new Error('Apple runner recording ownership changed before retrieval');
+  }
+  await transport.retrieve({ device, recordingAuthority, outputPath, signal });
 }
 
 export async function captureAppleClockAnchor(
@@ -105,7 +126,11 @@ export async function captureAppleClockAnchor(
   }
 }
 
-export async function isAppleRunnerBundleId(bundleId: string): Promise<boolean> {
-  const { IOS_RUNNER_CONTAINER_BUNDLE_IDS } = await import('@agent-device/platform-apple/runner');
-  return IOS_RUNNER_CONTAINER_BUNDLE_IDS.includes(bundleId);
+export async function isAppleRunnerBundleId(
+  device: DeviceInfo,
+  bundleId: string,
+): Promise<boolean> {
+  const { getRunnerSessionSnapshot } = await loadAppleRunnerRecordingOperations();
+  const session = getRunnerSessionSnapshot(device.id);
+  return session?.alive === true && session.launchIdentity.testHostContainerBundleId === bundleId;
 }

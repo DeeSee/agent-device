@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
 import type { DurableCaptureProgress } from '@agent-device/contracts/durable-resource';
+import type { AppleRunnerRecordingAuthority } from '@agent-device/contracts/screen-recording-runtime-host';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { recordingFileStore } from '@agent-device/capture-kit/recording-artifact-fixtures';
 import {
@@ -14,6 +15,7 @@ import {
   processIdentity,
   recordingInput,
   recordingOutputPath,
+  runnerOwnership,
   simulator,
   simulatorRecorderStart,
 } from './runtime.fixtures.ts';
@@ -344,9 +346,12 @@ test.each([
           runRunner: async (_device, request) =>
             request.kind === 'start'
               ? {
-                  runnerSessionId: 'runner-session',
                   runnerAuthority: 'local-lease',
-                  remotePath: 'tmp/agent-device-recording-123.mp4',
+                  recordingAuthority: {
+                    ...runnerOwnership.recordingAuthority,
+                    remotePath: 'tmp/agent-device-recording-123.mp4',
+                  },
+                  startState: 'active',
                 }
               : {},
         },
@@ -363,16 +368,23 @@ test.each([
       owner: localRuntimeOwner('apple'),
       signal: new AbortController().signal,
     });
-    const { remotePath: _persistedRemotePath, ...bodyWithoutRemotePath } =
-      started.envelope.descriptor.body;
+    const persistedAuthority = started.envelope.descriptor.body
+      .recordingAuthority as AppleRunnerRecordingAuthority;
+    const { remotePath: _persistedRemotePath, ...authorityWithoutRemotePath } = persistedAuthority;
     const envelope = {
       ...started.envelope,
       descriptor: {
         ...started.envelope.descriptor,
         body:
           remotePath === undefined
-            ? bodyWithoutRemotePath
-            : { ...bodyWithoutRemotePath, remotePath },
+            ? {
+                ...started.envelope.descriptor.body,
+                recordingAuthority: authorityWithoutRemotePath,
+              }
+            : {
+                ...started.envelope.descriptor.body,
+                recordingAuthority: { ...authorityWithoutRemotePath, remotePath },
+              },
       },
     };
 

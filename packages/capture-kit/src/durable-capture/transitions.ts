@@ -29,6 +29,7 @@ export async function finishLiveDurableCapture<
     sessionName: string;
     sessionStore: DurableCaptureSessionStore<S>;
     intent: DurableCaptureFinishIntent;
+    signal?: AbortSignal;
   },
   resourcePath: string,
 ): Promise<C> {
@@ -40,6 +41,7 @@ export async function finishLiveDurableCapture<
       fence: active.envelope.fence,
       resourcePath,
       intent: params.intent,
+      signal: params.signal,
     });
     clearLiveSlot(definition, params);
     return result;
@@ -63,6 +65,7 @@ export async function finishDurableCaptureHandle<
     fence: DurableCaptureResourceFenceLease<K>['envelope']['fence'];
     resourcePath: string;
     intent: DurableCaptureFinishIntent;
+    signal?: AbortSignal;
   },
 ): Promise<C> {
   return await withDurableCaptureResourceFence({
@@ -74,8 +77,12 @@ export async function finishDurableCaptureHandle<
       const progress = createStopProgress(lease);
       let finishOutcome: FinishOutcome<C>;
       try {
-        finishOutcome = await params.handle.finish(progress);
+        finishOutcome = await params.handle.finish(progress, params.signal);
       } catch (finishError) {
+        if (params.signal?.aborted) {
+          restoreActiveAfterCanceledFinish(lease);
+          throw finishError;
+        }
         await respondToFailedFinish(definition, lease, params, finishError, params.intent);
         throw finishError;
       }
@@ -88,6 +95,14 @@ export async function finishDurableCaptureHandle<
       await respondToFailedFinish(definition, lease, params, finishError, params.intent);
       throw finishError;
     },
+  });
+}
+
+function restoreActiveAfterCanceledFinish<K extends string>(
+  lease: DurableCaptureResourceFenceLease<K>,
+): void {
+  lease.transition('open', {
+    metadata: { ...(lease.envelope.metadata ?? {}), phase: 'active' },
   });
 }
 

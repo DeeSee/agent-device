@@ -1,4 +1,9 @@
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  captureRunnerBuildSources,
+  frozenRunnerBuildSourcesSha256,
+} from './packages/platform-apple/src/runner/runner-local-artifact-source-set.ts';
 import { defineConfig, type TsdownPluginOption } from 'tsdown';
 
 const typeScriptPackageJsonUrl = import.meta.resolve('typescript/package.json');
@@ -106,6 +111,7 @@ export default defineConfig({
     finders: 'src/sdk/finders.ts',
     'ai-sdk': 'src/ai-sdk/index.ts',
     'internal/bin': 'src/bin.ts',
+    'internal/build-local-apple-runner-artifact': 'src/cli/build-local-apple-runner-artifact.ts',
     'internal/companion-tunnel': 'src/client/companion-tunnel.ts',
     'internal/daemon': 'src/daemon.ts',
     'internal/run-script-http-child': 'packages/maestro/src/daemon-port/run-script-http-child.ts',
@@ -177,6 +183,11 @@ export default defineConfig({
   tsconfig: 'tsconfig.lib.json',
   define: {
     __AGENT_DEVICE_VERSION__: JSON.stringify(packageJson.version),
+    __AGENT_DEVICE_RUNNER_SOURCE_SHA256__: JSON.stringify(
+      frozenRunnerBuildSourcesSha256(
+        captureRunnerBuildSources(fileURLToPath(new URL('.', import.meta.url))),
+      ),
+    ),
     __OWNER_FILES__: 'false',
   },
   shims: true,

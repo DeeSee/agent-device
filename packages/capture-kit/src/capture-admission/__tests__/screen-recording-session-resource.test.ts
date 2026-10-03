@@ -275,3 +275,123 @@ function resourcePath(
 ) {
   return screenRecordingResourceStore.resolvePath(sessionStore.resolveSessionDir(sessionName));
 }
+
+test('a canceled stop preserves the exact live take and permits an idempotent retry', async () => {
+  const sessionStore = makeCaptureAdmissionSessionStore<TestRecordingSession>(
+    'screen-recording-canceled-stop-',
+  );
+  const sessionName = 'recording';
+  const session: TestRecordingSession = {
+    name: sessionName,
+    device: {
+      platform: 'apple',
+      appleOs: 'ios',
+      id: 'device-1',
+      name: 'iPhone',
+      kind: 'device',
+    },
+  };
+  sessionStore.set(sessionName, session);
+  const owner = localRuntimeOwner('apple');
+  const fence = { token: 'recording-fence', generation: 1 } as const;
+  let finishCalls = 0;
+  let resolveFirstFinishStarted!: () => void;
+  const firstFinishStarted = new Promise<void>((resolve) => {
+    resolveFirstFinishStarted = resolve;
+  });
+  const forceCleanup = vi.fn(async () => ({ status: 'cleaned' as const }));
+  const handle = createScreenRecordingLiveHandle(
+    {
+      backend: 'runner',
+      outPath: '/tmp/recording.mp4',
+      startedAt: 1,
+      scope: 'app',
+      showTouches: false,
+      recordOnlySession: false,
+      gestureEvents: [],
+    },
+    {
+      finish: async (snapshot, _progress, signal) => {
+        finishCalls += 1;
+        if (finishCalls === 1) {
+          if (!signal) throw new Error('expected stop request signal');
+          resolveFirstFinishStarted();
+          signal.throwIfAborted();
+          await new Promise<never>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+        }
+        return {
+          status: 'completed',
+          result: {
+            backend: snapshot.backend,
+            outPath: snapshot.outPath,
+            startedAt: snapshot.startedAt,
+            completedAt: 2,
+            scope: snapshot.scope,
+            showTouches: snapshot.showTouches,
+            recordOnlySession: snapshot.recordOnlySession,
+          },
+        };
+      },
+      forceCleanup,
+    },
+  );
+  const envelope = createDurableResourceEnvelope({
+    resourceKind: 'screen-recording',
+    sessionId: sessionName,
+    device: { id: session.device.id, family: 'apple', appleOs: 'ios', kind: 'device' },
+    owner,
+    fence,
+    lifecycle: 'open',
+    descriptor: { version: 1, body: { recordingId: 'recording-id' } },
+  });
+  await adoptStartedScreenRecording({
+    admissionLedger: createScreenRecordingAdmissionLedger(),
+    session,
+    sessionName,
+    sessionStore,
+    device: session.device,
+    owner,
+    fence,
+    pendingHandle: new PendingTransferGuard(handle),
+    envelope,
+    throwIfCanceled: () => {},
+  });
+
+  const first = sessionStore.get(sessionName);
+  if (!first) throw new Error('Expected screen-recording session');
+  const controller = new AbortController();
+  const canceledStop = finishLiveScreenRecording({
+    intent: 'capture',
+    session: first,
+    sessionName,
+    sessionStore,
+    signal: controller.signal,
+  });
+  const cancellation = new Error('request canceled');
+  await firstFinishStarted;
+  controller.abort(cancellation);
+  await expect(canceledStop).rejects.toBe(cancellation);
+
+  expect(forceCleanup).not.toHaveBeenCalled();
+  expect(sessionStore.get(sessionName)?.screenRecording?.handle).toBe(handle);
+  expect(screenRecordingResourceStore.read(resourcePath(sessionStore, sessionName))).toMatchObject({
+    status: 'decoded',
+    envelope: { lifecycle: 'open', metadata: { phase: 'active' } },
+  });
+
+  const retrySession = sessionStore.get(sessionName);
+  if (!retrySession) throw new Error('Expected retryable screen-recording session');
+  await expect(
+    finishLiveScreenRecording({
+      intent: 'capture',
+      session: retrySession,
+      sessionName,
+      sessionStore,
+      signal: new AbortController().signal,
+    }),
+  ).resolves.toMatchObject({ backend: 'runner', outPath: '/tmp/recording.mp4' });
+  expect(finishCalls).toBe(2);
+  expect(sessionStore.get(sessionName)?.screenRecording).toBeUndefined();
+});

@@ -31,8 +31,13 @@ test('uses the closed Apple runner and finalizer for a CoreDevice recording', as
             recorderStartUptimeMs: 10,
           };
         },
-        retrieveRunnerRecording: async (_device, remotePath, outputPath) => {
-          calls.push(`retrieve:${remotePath}:${outputPath}`);
+        retrieveRunnerRecording: async (
+          _device,
+          runnerAuthority,
+          recordingAuthority,
+          outputPath,
+        ) => {
+          calls.push(`retrieve:${runnerAuthority}:${recordingAuthority.remotePath}:${outputPath}`);
         },
         startSimulator: async () => {
           throw new Error('unused');
@@ -51,8 +56,8 @@ test('uses the closed Apple runner and finalizer for a CoreDevice recording', as
     sessionId: 'one',
     outputPath: '/tmp/capture.mp4',
     scope: 'app',
-    showTouches: true,
-    hideTouchesRequested: false,
+    showTouches: false,
+    hideTouchesRequested: true,
     recordOnlySession: false,
     activeSessionApp: { bundleId: 'com.example.app' },
     fence: { token: 'fence', generation: 1 },
@@ -70,9 +75,49 @@ test('uses the closed Apple runner and finalizer for a CoreDevice recording', as
   assert.deepEqual(calls, [
     'start',
     'stop',
-    'retrieve:tmp/agent-device-recording-123.mp4:/tmp/capture.mp4',
+    'retrieve:local-lease:tmp/agent-device-recording-123.mp4:/tmp/capture.mp4',
     'finalize:iOS recording',
   ]);
+});
+
+test('binds physical recording stop, retrieval, and finalization to the stop request signal', async () => {
+  const stopController = new AbortController();
+  let stopSignal: AbortSignal | undefined;
+  let retrieveSignal: AbortSignal | undefined;
+  let finalizerSignal: AbortSignal | undefined;
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      apple: {
+        runRunner: async (_device, request, signal) => {
+          if (request.kind === 'stop') stopSignal = signal;
+          return request.kind === 'start' ? coreDeviceRunnerStart : {};
+        },
+        retrieveRunnerRecording: async (
+          _device,
+          _runnerAuthority,
+          _recordingAuthority,
+          _outputPath,
+          signal,
+        ) => {
+          retrieveSignal = signal;
+        },
+      },
+      complete: async (_input, signal) => {
+        finalizerSignal = signal;
+        return {};
+      },
+    }),
+    device: coreDevice,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+  const started = await operations.screenRecordingStart(input({ scope: 'app' }));
+
+  await started.pendingHandle.transfer().finish(undefined, stopController.signal);
+
+  expect(stopSignal).toBe(stopController.signal);
+  expect(retrieveSignal).toBe(stopController.signal);
+  expect(finalizerSignal).toBe(stopController.signal);
 });
 
 test('declares the exact XCTest backend failure before exposing operations', () => {
@@ -126,6 +171,35 @@ test('an invalidated runner recording still names its device-side path as owed',
       overlayWarning: 'overlay unavailable: runner restarted',
     },
   });
+});
+
+test('refuses simulator requested FPS before any recording effect', async () => {
+  const prepare = vi.fn(async () => {});
+  const captureClockAnchor = vi.fn(async () => undefined);
+  const startSimulator = vi.fn(async () => {
+    throw new Error('must not start');
+  });
+  const runRunner = vi.fn(async () => {
+    throw new Error('must not start');
+  });
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      apple: { captureClockAnchor, startSimulator, runRunner },
+      outputs: { prepare },
+    }),
+    device: simulator,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+
+  await expect(operations.screenRecordingStart(input({ fps: 30 }))).rejects.toMatchObject({
+    code: 'UNSUPPORTED_OPERATION',
+    details: { reason: 'apple-simulator-recording-fps-unsupported' },
+  });
+  expect(prepare).not.toHaveBeenCalled();
+  expect(captureClockAnchor).not.toHaveBeenCalled();
+  expect(startSimulator).not.toHaveBeenCalled();
+  expect(runRunner).not.toHaveBeenCalled();
 });
 
 test('uses simctl on simulators and retains the macOS runner path', async () => {
@@ -183,7 +257,7 @@ test('uses simctl on simulators and retains the macOS runner path', async () => 
       outputPath: recordingOutputPath(`${runtimeDevice.id}.mp4`),
       scope: 'device',
       showTouches: false,
-      hideTouchesRequested: false,
+      hideTouchesRequested: true,
       recordOnlySession: false,
       activeSessionApp: { bundleId: 'com.example.app' },
       fence: { token: runtimeDevice.id, generation: 1 },
@@ -202,6 +276,7 @@ test('uses simctl on simulators and retains the macOS runner path', async () => 
     'finalize:iOS recording',
     'runner:start',
     'runner:stop',
+    'runner:release',
     'finalize:macOS recording',
   ]);
   expect(ownedProcesses.replace).toHaveBeenCalledWith({ kind: 'session', sessionId: 'sim' }, [
@@ -522,7 +597,7 @@ test('a refused runner stop is asked again by the next record stop', async () =>
   expect(calls).toEqual(['start', 'stop', 'stop']);
 });
 
-test('runner cancellation after acquisition stops the recorder and preserves the exact reason', async () => {
+test('runner cancellation after dispatch returns an uncertain exact handle for adoption', async () => {
   const controller = new AbortController();
   const reason = new Error('cancel runner acquisition');
   const calls: string[] = [];
@@ -544,8 +619,52 @@ test('runner cancellation after acquisition stops the recorder and preserves the
     signal: controller.signal,
   });
 
-  await expect(operations.screenRecordingStart(input({ scope: 'app' }))).rejects.toBe(reason);
-  expect(calls).toEqual(['start', 'stop']);
+  const started = await operations.screenRecordingStart(input({ scope: 'app' }));
+
+  expect(started.recoverableStartFailure).toMatchObject({
+    reason: 'runner_recording_start_uncertain',
+  });
+  expect(calls).toEqual(['start']);
+  await expect(started.pendingHandle.transfer().forceCleanup()).resolves.toEqual({
+    status: 'cleaned',
+  });
+  expect(calls).toEqual(['start', 'stop', 'release']);
+});
+
+test('publishes a durable exact handle before reporting an uncertain runner start', async () => {
+  const calls: string[] = [];
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      apple: {
+        runRunner: async (_device, request) => {
+          calls.push(request.kind);
+          return request.kind === 'start'
+            ? { ...coreDeviceRunnerStart, startState: 'uncertain' as const }
+            : {};
+        },
+      },
+    }),
+    device: coreDevice,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+
+  const started = await operations.screenRecordingStart(input({ scope: 'app' }));
+
+  expect(started.recoverableStartFailure).toMatchObject({
+    reason: 'runner_recording_start_uncertain',
+  });
+  expect(started.envelope.descriptor).toMatchObject({
+    version: 2,
+    body: {
+      startState: 'uncertain',
+      recordingAuthority: coreDeviceRunnerStart.recordingAuthority,
+    },
+  });
+  await expect(started.pendingHandle.transfer().forceCleanup()).resolves.toEqual({
+    status: 'cleaned',
+  });
+  expect(calls).toEqual(['start', 'stop', 'release']);
 });
 
 test('rejects invalid simulator app scope before output or process acquisition', async () => {
@@ -570,13 +689,27 @@ test('rejects invalid simulator app scope before output or process acquisition',
   expect(startSimulator).not.toHaveBeenCalled();
 });
 
-test('compensates a runner finalizer failure without stopping the runner twice', async () => {
+test('refuses completion when the stable raw-file finalizer fails', async () => {
+  let runnerPinReleased = false;
   const stop = vi.fn(async () => ({}));
+  const release = vi.fn(async () => {
+    if (runnerPinReleased) throw new Error('runner recording pin is already released');
+    runnerPinReleased = true;
+    return {};
+  });
+  const retrieve = vi.fn(async () => {
+    runnerPinReleased = true;
+  });
   const operations = createAppleScreenRecordingOperations({
     host: appleHost({
       apple: {
         runRunner: async (_device, request) =>
-          request.kind === 'start' ? coreDeviceRunnerStart : await stop(),
+          request.kind === 'start'
+            ? coreDeviceRunnerStart
+            : request.kind === 'stop'
+              ? await stop()
+              : await release(),
+        retrieveRunnerRecording: retrieve,
       },
       complete: async () => {
         throw new Error('finalizer failed after runner stop');
@@ -592,4 +725,6 @@ test('compensates a runner finalizer failure without stopping the runner twice',
   await expect(handle.finish()).rejects.toThrow('finalizer failed after runner stop');
   await expect(handle.forceCleanup()).resolves.toEqual({ status: 'cleaned' });
   expect(stop).toHaveBeenCalledOnce();
+  expect(retrieve).toHaveBeenCalledOnce();
+  expect(release).not.toHaveBeenCalled();
 });
