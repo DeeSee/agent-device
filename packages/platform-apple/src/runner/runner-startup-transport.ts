@@ -127,14 +127,7 @@ export async function waitForRunner(
       },
     );
   } catch (error) {
-    if (signal?.aborted || isRequestCanceledError(error)) {
-      throw createRequestCanceledError();
-    }
-    if (isUsbmuxDeviceUnattachedError(error)) throw error;
-    if (isRunnerListenerPortCollisionError(error)) throw error;
-    if (error instanceof AppError && error.details?.listenerReadiness === 'process_finished') {
-      throw error;
-    }
+    rethrowTerminalConnectionFailure(error, signal);
     if (!lastError) {
       lastError = error;
     }
@@ -164,9 +157,10 @@ export async function waitForRunner(
     return new Response(simResponse.body, { status: simResponse.status });
   }
 
-  if (session?.child.exitCode !== null && session?.child.exitCode !== undefined) {
+  const exitedSession = exitedRunnerSession(session);
+  if (exitedSession) {
     throw withRunnerWriteEvidence(
-      await buildRunnerEarlyExitError({ session, port, logPath }),
+      await buildRunnerEarlyExitError({ session: exitedSession, port, logPath }),
       commandMayHaveBeenWritten,
     );
   }
@@ -235,21 +229,22 @@ async function ensureRunnerAttemptCanStart(params: {
     });
   }
   const listenerState = params.session?.listenerReadiness?.state();
-  if (params.session && params.session.state !== 'ready' && listenerState === 'port_in_use') {
+  if (runnerSessionIsStarting(params.session) && listenerState === 'port_in_use') {
     throw new AppError('COMMAND_FAILED', 'Runner listener port is already in use', {
       reason: 'runner_listener_address_in_use',
       dispatched: 'no',
       listenerReadiness: listenerState,
     });
   }
-  if (params.session?.child.exitCode !== null && params.session?.child.exitCode !== undefined) {
+  const exitedSession = exitedRunnerSession(params.session);
+  if (exitedSession) {
     throw await buildRunnerEarlyExitError({
-      session: params.session,
+      session: exitedSession,
       port: params.port,
       logPath: params.logPath,
     });
   }
-  if (params.session && params.session.state !== 'ready') {
+  if (runnerSessionIsStarting(params.session)) {
     if (listenerState === 'process_finished') {
       const earlyExit = await buildRunnerEarlyExitError({
         session: params.session,
@@ -668,4 +663,32 @@ export async function buildRunnerEarlyExitError(params: {
   // catch and the disk-image state read before the build would be dropped. Same enrichment, applied
   // to the failure this path actually produces (#2683).
   return enrichRunnerStartupFailureWithDeviceStates(error, session.startupDeviceStates) as AppError;
+}
+
+function rethrowTerminalConnectionFailure(error: unknown, signal?: AbortSignal): void {
+  if (signal?.aborted || isRequestCanceledError(error)) {
+    throw createRequestCanceledError();
+  }
+  if (isUsbmuxDeviceUnattachedError(error)) throw error;
+  if (isRunnerListenerPortCollisionError(error)) throw error;
+  if (error instanceof AppError && error.details?.listenerReadiness === 'process_finished') {
+    throw error;
+  }
+}
+
+function exitedRunnerSession(
+  session: RunnerConnectionSession | undefined,
+): RunnerConnectionSession | undefined {
+  if (session === undefined) return undefined;
+  return session.child.exitCode !== null && session.child.exitCode !== undefined
+    ? session
+    : undefined;
+}
+
+function runnerSessionIsStarting(
+  session: RunnerConnectionSession | undefined,
+): session is RunnerConnectionSession & {
+  state: Exclude<RunnerConnectionSession['state'], 'ready'>;
+} {
+  return session !== undefined && session.state !== 'ready';
 }

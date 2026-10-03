@@ -1,3 +1,4 @@
+import type { SessionState, SessionRef } from '../../session-state.ts';
 import {
   commandRuntimeUseRequirements,
   listRuntimeFactCommands,
@@ -26,7 +27,6 @@ import {
 import { canonicalLocalDeviceKey } from '../../device/device-claim-paths.ts';
 import { deviceClaimIdentity } from '../../device/device-claims.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionRef } from '../../session-state.ts';
 import { SessionStore } from '../../session-store.ts';
 import { resolveSessionRunnerLogPath } from '../../session-artifact-paths.ts';
 import {
@@ -110,9 +110,7 @@ function sessionListInventoryResponse(
 
 function publicSessionInfo({ address, session }: SessionRef, sessionStore: SessionStore) {
   const sessionStateDir = sessionStore.resolveSessionDir(address);
-  const lifecycle = session.closeRecovery
-    ? 'close_retry_required'
-    : (session.deviceClaim?.reservationPhase ?? 'opened');
+  const lifecycle = publicSessionLifecycle(session);
   return {
     name: session.name,
     address,
@@ -497,4 +495,10 @@ function matchesRequestedPlatform(
   requestedPlatform: PlatformSelector | undefined,
 ): boolean {
   return matchesPlatformSelector(device, requestedPlatform);
+}
+
+function publicSessionLifecycle(session: SessionState) {
+  return session.closeRecovery
+    ? 'close_retry_required'
+    : (session.deviceClaim?.reservationPhase ?? 'opened');
 }

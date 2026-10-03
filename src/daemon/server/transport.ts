@@ -70,10 +70,7 @@ export function createSocketServer(handleRequest: DaemonInvokeFn): DaemonServer 
           };
           requestAbortRegistration = registerRequestAbort(requestIdForCleanup);
           activeRequestIds.add(requestIdForCleanup);
-          if (connectionClosed) markRequestCanceled(requestIdForCleanup);
-          if (isRequestCanceled(requestIdForCleanup)) {
-            throw createRequestCanceledError();
-          }
+          throwIfSocketRequestCanceled(requestIdForCleanup, connectionClosed);
           response = await withRequestProgressSink(
             streamProgress
               ? (event) => {
@@ -148,4 +145,9 @@ function listenLoopbackServer(
       reject(new AppError('COMMAND_FAILED', errorMessage));
     });
   });
+}
+
+function throwIfSocketRequestCanceled(requestId: string, connectionClosed: boolean): void {
+  if (connectionClosed) markRequestCanceled(requestId);
+  if (isRequestCanceled(requestId)) throw createRequestCanceledError();
 }

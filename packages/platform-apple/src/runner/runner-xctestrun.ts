@@ -7,7 +7,7 @@ export {
   type RunnerXctestrunArtifact,
   type RunnerXctestrunArtifactState,
 } from './runner-artifact.ts';
-export type { RunnerLaunchIdentity, RunnerLaunchSelection } from './runner-launch-identity.ts';
+export type { RunnerLaunchSelection } from './runner-launch-identity.ts';
 export async function resolveRunnerLaunchSelection(
   ...args: Parameters<typeof import('./runner-launch-identity.ts').resolveRunnerLaunchSelection>
 ): Promise<
@@ -25,7 +25,6 @@ export {
   requireRunnerPhaseRemainingMs,
   resolveExpectedRunnerCacheMetadata,
   resolveRunnerAppBundleId,
-  resolveRunnerTestHostBundleId,
   resolveRunnerDerivedPath,
   type RunnerPhaseBudget,
 } from './runner-cache-metadata.ts';

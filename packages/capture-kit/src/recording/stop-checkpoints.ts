@@ -191,63 +191,73 @@ function readNonEmptyString(value: unknown): string | undefined {
 
 export function readVideoInspection(value: unknown): VideoInspection | undefined {
   if (!isRecord(value) || value.source !== 'media-pts') return undefined;
-  if (value.status === 'unavailable')
-    return value.reason === 'unsupported-container' || value.reason === 'validator-unavailable'
+  if (value.status === 'unavailable') {
+    return isInspectionReason(value.reason, ['unsupported-container', 'validator-unavailable'])
       ? unavailableInspection(value.reason)
       : undefined;
+  }
   if (value.status === 'invalid') {
-    return value.reason === 'container-invalid' ||
-      value.reason === 'unplayable-or-duration-invalid' ||
-      value.reason === 'missing-video-track' ||
-      value.reason === 'missing-video-samples' ||
-      value.reason === 'sample-timing-invalid' ||
-      value.reason === 'reader-failed' ||
-      value.reason === 'probe-failed'
+    return isInspectionReason(value.reason, [
+      'container-invalid',
+      'unplayable-or-duration-invalid',
+      'missing-video-track',
+      'missing-video-samples',
+      'sample-timing-invalid',
+      'reader-failed',
+      'probe-failed',
+    ])
       ? invalidInspection(value.reason)
       : undefined;
   }
-  if (value.status !== 'measured') return undefined;
+  return value.status === 'measured' ? readMeasuredInspection(value) : undefined;
+}
+
+function isInspectionReason<T extends string>(value: unknown, reasons: readonly T[]): value is T {
+  return typeof value === 'string' && reasons.includes(value as T);
+}
+
+type RecordingSampleTiming = {
+  -readonly [Key in 'firstPtsMs' | 'lastPtsMs' | 'maxInterSampleGapMs' | 'effectiveFps']?: number;
+};
+
+function readSampleTiming(value: Record<string, unknown>): RecordingSampleTiming | undefined {
+  const readers = {
+    firstPtsMs: optionalFiniteNumber,
+    lastPtsMs: optionalFiniteNumber,
+    maxInterSampleGapMs: optionalNonNegativeFinite,
+    effectiveFps: optionalNonNegativeFinite,
+  };
+  const timing: RecordingSampleTiming = {};
+  for (const key of Object.keys(readers) as (keyof typeof readers)[]) {
+    const parsed = readers[key](value[key]);
+    if (parsed === false) return undefined;
+    if (parsed !== undefined) timing[key] = parsed;
+  }
+  return timing;
+}
+
+function sampleTimingIsCoherent(sampleCount: number, timing: RecordingSampleTiming): boolean {
+  const { firstPtsMs, lastPtsMs, maxInterSampleGapMs, effectiveFps } = timing;
+  if (sampleCount === 0) return firstPtsMs === undefined && lastPtsMs === undefined;
+  if (firstPtsMs === undefined || lastPtsMs === undefined) return false;
+  return (
+    sampleCount < 2 ||
+    (lastPtsMs > firstPtsMs && maxInterSampleGapMs !== undefined && effectiveFps !== undefined)
+  );
+}
+
+function readMeasuredInspection(value: Record<string, unknown>): VideoInspection | undefined {
   if (!isNonNegativeInteger(value.sampleCount) || !isNonNegativeFinite(value.mediaDurationMs)) {
     return undefined;
   }
-  const firstPtsMs = optionalFiniteNumber(value.firstPtsMs);
-  const lastPtsMs = optionalFiniteNumber(value.lastPtsMs);
-  const maxInterSampleGapMs = optionalNonNegativeFinite(value.maxInterSampleGapMs);
-  const effectiveFps = optionalNonNegativeFinite(value.effectiveFps);
-  if (
-    firstPtsMs === false ||
-    lastPtsMs === false ||
-    maxInterSampleGapMs === false ||
-    effectiveFps === false
-  ) {
-    return undefined;
-  }
-  if (value.sampleCount === 0 && (firstPtsMs !== undefined || lastPtsMs !== undefined)) {
-    return undefined;
-  }
-  if (value.sampleCount > 0 && (firstPtsMs === undefined || lastPtsMs === undefined)) {
-    return undefined;
-  }
-  if (value.sampleCount >= 2) {
-    if (
-      firstPtsMs === undefined ||
-      lastPtsMs === undefined ||
-      lastPtsMs <= firstPtsMs ||
-      maxInterSampleGapMs === undefined ||
-      effectiveFps === undefined
-    ) {
-      return undefined;
-    }
-  }
+  const timing = readSampleTiming(value);
+  if (timing === undefined || !sampleTimingIsCoherent(value.sampleCount, timing)) return undefined;
   return Object.freeze({
     status: 'measured',
     source: 'media-pts',
     sampleCount: value.sampleCount,
     mediaDurationMs: value.mediaDurationMs,
-    ...(firstPtsMs === undefined ? {} : { firstPtsMs }),
-    ...(lastPtsMs === undefined ? {} : { lastPtsMs }),
-    ...(maxInterSampleGapMs === undefined ? {} : { maxInterSampleGapMs }),
-    ...(effectiveFps === undefined ? {} : { effectiveFps }),
+    ...timing,
   });
 }
 

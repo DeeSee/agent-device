@@ -95,13 +95,18 @@ export async function ensureRunnerSession(
       return await withRunnerLeaseLock(
         device.id,
         async () =>
-          await startRunnerSessionWithLease(
+          await startRunnerSessionWithLease({
             device,
             options,
             budget,
             requestedSelection,
             startConstraints,
-          ),
+            controls: {
+              assertRunnerSessionMayStart,
+              measureRunnerStartupStep,
+              stopRunnerSessionInternal,
+            },
+          }),
       );
     } catch (error) {
       throw budget.exhausted.aborted ? budget.exhausted.reason : error;
@@ -129,7 +134,7 @@ export function assertExpectedRunnerSession(
   }
 }
 
-export function assertRunnerSessionMayStart(expectedRunnerSessionId: string | undefined): void {
+function assertRunnerSessionMayStart(expectedRunnerSessionId: string | undefined): void {
   if (expectedRunnerSessionId !== undefined) throw runnerSessionOwnershipChanged();
 }
 
@@ -255,7 +260,7 @@ export async function invalidateRunnerSession(
   });
 }
 
-export async function stopRunnerSessionInternal(
+async function stopRunnerSessionInternal(
   deviceId: string,
   sessionOverride?: RunnerSession,
   options: RunnerDisposalOptions = {},
@@ -561,22 +566,7 @@ export async function executeRunnerCommandWithSession(
   );
 }
 
-/**
- * What the xctestrun build may spend: the rest of the start budget, which an explicit
- * `buildTimeoutMs` can only shorten. The build is the one step with no ceiling of its own, so a
- * start with no caller left is still ended by the clock it opened (#2894). Throws when the start
- * has nothing left, so a spent budget fails before xcodebuild is spawned.
- */
-
-/**
- * What the launched runner has to answer its first command, measured from launch. An explicit
- * `startupTimeoutMs` bounds the whole start, readiness included, so readiness gets what is left of
- * it. A defaulted start keeps the runner's own readiness window ({@link RUNNER_STARTUP_TIMEOUT_MS}):
- * the default budget is sized for a cold build, and a runner that never answers must not be joined
- * for the rest of it. Neither exceeds what the start budget has left.
- */
-
-export async function measureRunnerStartupStep<T>(
+async function measureRunnerStartupStep<T>(
   timings: Record<string, number>,
   phase: string,
   task: () => Promise<T> | T,

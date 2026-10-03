@@ -457,17 +457,15 @@ async function sendSocketRequest(
   throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
   return new Promise((resolve, reject) => {
     let requestWritten = false;
-    let settled = false;
     let abortRequest = (): void => {};
-    const finish = (task: () => void): void => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      options.signal?.removeEventListener('abort', abortRequest);
-      task();
-    };
+    const settlement = createRequestSettlement(
+      options.signal,
+      () => timeoutHandle,
+      () => abortRequest,
+    );
+    const finish = settlement.finish;
     const socket = net.createConnection({ host: '127.0.0.1', port }, () => {
-      if (settled) return;
+      if (settlement.settled) return;
       requestWritten = true;
       socket.write(`${JSON.stringify(req)}\n`);
     });
@@ -501,7 +499,7 @@ async function sendSocketRequest(
     readDaemonSocketProgressResponse(socket, {
       req,
       onProgress: options.onProgress,
-      isSettled: () => settled,
+      isSettled: () => settlement.settled,
       clearTimeout: () => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
       },
@@ -514,7 +512,7 @@ async function sendSocketRequest(
     });
 
     socket.on('error', (err) => {
-      if (settled) return;
+      if (settlement.settled) return;
       finish(() =>
         reject(
           handleTransportError(err, req.meta?.requestId, false, {
@@ -589,15 +587,13 @@ async function sendHttpRequest(
   throwIfTransportRequestAborted(options.signal, req.meta?.requestId);
 
   return await new Promise((resolve, reject) => {
-    let settled = false;
     let abortRequest = (): void => {};
-    const finish = (task: () => void): void => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      options.signal?.removeEventListener('abort', abortRequest);
-      task();
-    };
+    const settlement = createRequestSettlement(
+      options.signal,
+      () => timeoutHandle,
+      () => abortRequest,
+    );
+    const finish = settlement.finish;
     const finishResolve = (response: DaemonResponse | PromiseLike<DaemonResponse>): void =>
       finish(() => resolve(response));
     const finishReject = (error: unknown): void => finish(() => reject(error));
@@ -763,4 +759,25 @@ function throwIfTransportRequestAborted(
   requestId: string | undefined,
 ): void {
   if (signal?.aborted) throw createRequestCanceledError({ requestId });
+}
+
+function createRequestSettlement(
+  signal: AbortSignal | undefined,
+  timeout: () => ReturnType<typeof setTimeout> | undefined,
+  abort: () => () => void,
+) {
+  let settled = false;
+  return {
+    get settled() {
+      return settled;
+    },
+    finish(task: () => void): void {
+      if (settled) return;
+      settled = true;
+      const timer = timeout();
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', abort());
+      task();
+    },
+  };
 }

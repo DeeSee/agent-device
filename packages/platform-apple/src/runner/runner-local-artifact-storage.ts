@@ -169,28 +169,7 @@ function copyDirectoryContents(
       fs.chmodSync(destinationPath, stat.mode & 0o777);
       continue;
     }
-    if (!stat.isFile()) throw roleFailure(role, 'special_file', entry.name);
-    if (stat.nlink !== 1) throw roleFailure(role, 'hardlink', entry.name);
-    const bytes = readRegularFileNoFollow(sourcePath, stat, role, entry.name);
-    let destinationDescriptor: number | undefined;
-    try {
-      destinationDescriptor = fs.openSync(
-        destinationPath,
-        fs.constants.O_WRONLY |
-          fs.constants.O_CREAT |
-          fs.constants.O_EXCL |
-          fs.constants.O_NOFOLLOW,
-        stat.mode & 0o777,
-      );
-      fs.writeFileSync(destinationDescriptor, bytes);
-      fs.fsyncSync(destinationDescriptor);
-    } finally {
-      if (destinationDescriptor !== undefined) fs.closeSync(destinationDescriptor);
-    }
-    fs.chmodSync(destinationPath, stat.mode & 0o777);
-    if (fs.lstatSync(destinationPath).nlink !== 1) {
-      throw roleFailure(role, 'hardlink', entry.name);
-    }
+    copyRegularRunnerEntry(sourcePath, destinationPath, stat, role, entry.name);
   }
 }
 
@@ -200,26 +179,26 @@ function readRegularFileNoFollow(
   role: 'source' | 'product',
   relativePath: string,
 ): Buffer {
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const before = fs.fstatSync(descriptor);
+  return readStableRunnerFile(filePath, (before) => {
     if (!before.isFile()) throw roleFailure(role, 'special_file', relativePath);
     if (before.nlink !== 1) throw roleFailure(role, 'hardlink', relativePath);
     assertSameOpenedIdentity(expected, before, role, relativePath);
+  });
+}
+
+export function readStableRunnerFile(filePath: string, validate: (stat: fs.Stats) => void): Buffer {
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(descriptor);
+    validate(before);
     const bytes = fs.readFileSync(descriptor);
     const after = fs.fstatSync(descriptor);
-    if (
-      before.ino !== after.ino ||
-      before.dev !== after.dev ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs
-    ) {
-      throw failure('product_copy_changed', `Runner file changed while read: ${relativePath}`);
-    }
+    const keys = ['ino', 'dev', 'size', 'mtimeMs'] as const;
+    if (keys.some((key) => before[key] !== after[key]))
+      throw failure('product_copy_changed', `Runner file changed while read: ${filePath}`);
     return bytes;
   } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.closeSync(descriptor);
   }
 }
 
@@ -297,4 +276,32 @@ export function snapshotRunnerProducerFiles(root: string, labels: readonly strin
     return { path: label, mode: stat.mode & 0o777, sha256: sha256(bytes) };
   });
   return sha256(Buffer.from(JSON.stringify(entries)));
+}
+
+function copyRegularRunnerEntry(
+  sourcePath: string,
+  destinationPath: string,
+  stat: fs.Stats,
+  role: 'source' | 'product',
+  name: string,
+): void {
+  if (!stat.isFile()) throw roleFailure(role, 'special_file', name);
+  if (stat.nlink !== 1) throw roleFailure(role, 'hardlink', name);
+  const bytes = readRegularFileNoFollow(sourcePath, stat, role, name);
+  let destinationDescriptor: number | undefined;
+  try {
+    destinationDescriptor = fs.openSync(
+      destinationPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      stat.mode & 0o777,
+    );
+    fs.writeFileSync(destinationDescriptor, bytes);
+    fs.fsyncSync(destinationDescriptor);
+  } finally {
+    if (destinationDescriptor !== undefined) fs.closeSync(destinationDescriptor);
+  }
+  fs.chmodSync(destinationPath, stat.mode & 0o777);
+  if (fs.lstatSync(destinationPath).nlink !== 1) {
+    throw roleFailure(role, 'hardlink', name);
+  }
 }

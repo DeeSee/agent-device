@@ -73,66 +73,63 @@ function parseRunnerXctestrun(sourceXml: string): {
 export function detectPreparedRunnerEnvironment(
   bytes: Buffer,
 ): PreparedRunnerEnvironment | undefined {
-  const source = bytes.toString('utf8');
-  let plist: XmlNode;
-  try {
-    plist = parsePreparedPlist(source);
-  } catch (error) {
-    if (source.includes(ENVIRONMENT_VERSION_KEY) || source.includes(RUNNER_PORT_KEY)) {
-      throw invalidPreparedEnvironment('Marked XCTest runner is not valid XML', error);
-    }
-    return undefined;
-  }
-
+  const plist = parsePossiblePreparedEnvironment(bytes);
+  if (plist === undefined) return undefined;
   const root = requirePreparedDictionary(
     plist.children[0],
     'XCTest runner plist root must be a dictionary',
   );
   validatePreparedDictionaryTree(root);
   const targets = collectTestTargets(root);
-  const markerPresent = targets.some((target) =>
-    ENVIRONMENT_KEYS.some((key) => {
-      const environment = readPreparedDictionaryEntry(target, key);
-      return (
-        environment?.name === 'dict' &&
-        (readPreparedDictionaryEntry(environment, ENVIRONMENT_VERSION_KEY) !== undefined ||
-          readPreparedDictionaryEntry(environment, RUNNER_PORT_KEY) !== undefined)
-      );
-    }),
-  );
-  if (!markerPresent) return undefined;
-  if (targets.length === 0) {
-    throw invalidPreparedEnvironment('Marked XCTest runner has no runnable test targets');
-  }
-
-  const ports = new Set<number>();
-  for (const target of targets) {
-    for (const environmentKey of ENVIRONMENT_KEYS) {
-      const environment = readPreparedDictionaryEntry(target, environmentKey);
-      if (environment?.name !== 'dict') {
-        throw invalidPreparedEnvironment(`Marked XCTest runner is missing ${environmentKey}`);
-      }
-      const version = readPreparedDictionaryString(environment, ENVIRONMENT_VERSION_KEY);
-      const portValue = readPreparedDictionaryString(environment, RUNNER_PORT_KEY);
-      if (version !== '1') {
-        throw invalidPreparedEnvironment('XCTest runner environment version is unsupported');
-      }
-      const port = Number(portValue);
-      assertRunnerPort(port);
-      ports.add(port);
-    }
-    if (readPreparedDictionaryString(target, 'TestBundlePath')) {
-      for (const [key, value] of Object.entries(CAPTURE_POLICY)) {
-        if (readPreparedDictionaryString(target, key) !== value) {
-          throw invalidPreparedEnvironment('XCTest runner capture policy is not canonical');
-        }
-      }
-    }
-  }
-  if (ports.size !== 1) {
+  if (!targets.some(hasPreparedEnvironmentMarker)) return undefined;
+  const ports = new Set(targets.flatMap(readPreparedTargetPorts));
+  if (ports.size !== 1)
     throw invalidPreparedEnvironment('XCTest runner environment contains conflicting ports');
-  }
   return Object.freeze({ version: 1, runnerPort: [...ports][0] as number });
+}
+
+function parsePossiblePreparedEnvironment(bytes: Buffer): XmlNode | undefined {
+  const source = bytes.toString('utf8');
+  try {
+    return parsePreparedPlist(source);
+  } catch (error) {
+    if (source.includes(ENVIRONMENT_VERSION_KEY) || source.includes(RUNNER_PORT_KEY))
+      throw invalidPreparedEnvironment('Marked XCTest runner is not valid XML', error);
+    return undefined;
+  }
+}
+
+function hasPreparedEnvironmentMarker(target: XmlNode): boolean {
+  return ENVIRONMENT_KEYS.some((key) => {
+    const environment = readPreparedDictionaryEntry(target, key);
+    return (
+      environment?.name === 'dict' &&
+      (readPreparedDictionaryEntry(environment, ENVIRONMENT_VERSION_KEY) !== undefined ||
+        readPreparedDictionaryEntry(environment, RUNNER_PORT_KEY) !== undefined)
+    );
+  });
+}
+
+function readPreparedTargetPorts(target: XmlNode): number[] {
+  const ports = ENVIRONMENT_KEYS.map((key) => {
+    const environment = readPreparedDictionaryEntry(target, key);
+    if (environment?.name !== 'dict')
+      throw invalidPreparedEnvironment(`Marked XCTest runner is missing ${key}`);
+    if (readPreparedDictionaryString(environment, ENVIRONMENT_VERSION_KEY) !== '1')
+      throw invalidPreparedEnvironment('XCTest runner environment version is unsupported');
+    const port = Number(readPreparedDictionaryString(environment, RUNNER_PORT_KEY));
+    assertRunnerPort(port);
+    return port;
+  });
+  if (readPreparedDictionaryString(target, 'TestBundlePath')) assertPreparedCapturePolicy(target);
+  return ports;
+}
+
+function assertPreparedCapturePolicy(target: XmlNode): void {
+  for (const [key, value] of Object.entries(CAPTURE_POLICY)) {
+    if (readPreparedDictionaryString(target, key) !== value)
+      throw invalidPreparedEnvironment('XCTest runner capture policy is not canonical');
+  }
 }
 
 function collectTestTargets(root: XmlNode): XmlNode[] {

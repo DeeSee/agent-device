@@ -220,7 +220,7 @@ export function resolveRunnerAppBundleId(env: NodeJS.ProcessEnv = process.env): 
   return configured || DEFAULT_IOS_RUNNER_APP_BUNDLE_ID;
 }
 
-export function resolveRunnerTestBundleId(env: NodeJS.ProcessEnv = process.env): string {
+function resolveRunnerTestBundleId(env: NodeJS.ProcessEnv = process.env): string {
   const configured = normalizeBundleId(env.AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID);
   if (configured) {
     return configured;

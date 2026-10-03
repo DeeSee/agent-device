@@ -430,25 +430,6 @@ export function readStaleRunnerLease(deviceId: string): RunnerLease | null {
   return verdict.type === 'adoptable' ? verdict.lease : null;
 }
 
-/**
- * Reconciles a pin whose recording descriptor was never durably adopted. The
- * caller must first prove that no screen-recording resource owns the device.
- */
-
-/**
- * Resolves recording ownership directly from the durable lease after the
- * session-owning daemon is gone. A dead exact runner clears only its own pin,
- * making later generic startup cleanup possible without killing any process.
- */
-
-/**
- * Runs an idempotent stop against the exact live stale lease and commits the
- * finalized state only after the runner confirms it. No ordinary adoption,
- * selector resolution, restart, or process cleanup is involved.
- */
-
-/** Copies only the media path sealed into the exact authority, then releases its pin. */
-
 // Marks a lease as handed off during graceful shutdown: the token no longer
 // matches this daemon, so the shutdown's own lease-cleanup paths skip it, and
 // once this process exits the lease classifies as stale for the next adopter.

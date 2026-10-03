@@ -1,3 +1,4 @@
+import { checkAppContainerJsonPath } from '@agent-device/contracts/app-deployment-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   createHostDirectory,
@@ -221,18 +222,7 @@ async function resolveRealDirectoryUnderRoot(
   let current = resolvedRoot;
   for (const component of components) {
     const candidate = path.join(current, component);
-    let stats: Awaited<ReturnType<typeof hostFileLstat>>;
-    try {
-      stats = await hostFileLstat(candidate);
-    } catch (error: unknown) {
-      if (!isMissingPath(error) || !createMissing) throw error;
-      try {
-        await createHostDirectory(candidate);
-      } catch (mkdirError: unknown) {
-        if (!isExistingPath(mkdirError)) throw mkdirError;
-      }
-      stats = await hostFileLstat(candidate);
-    }
+    const stats = await inspectContainerDirectory(candidate, createMissing);
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
       throw new AppError('COMMAND_FAILED', 'App container JSON parent must be a real directory');
     }
@@ -269,22 +259,6 @@ function requireSupportedDevice(device: DeviceInfo): void {
   }
 }
 
-function requireContainerPath(value: string): string {
-  const containerPath = requireText(value, 'containerPath');
-  if (
-    containerPath.length > 1024 ||
-    containerPath.startsWith('/') ||
-    containerPath.includes('\\') ||
-    containerPath.split('/').some((part) => part === '' || part === '.' || part === '..')
-  ) {
-    throw new AppError(
-      'INVALID_ARGS',
-      'containerPath must be a normalized relative app data container JSON path',
-    );
-  }
-  return containerPath;
-}
-
 function requireText(value: string, name: string): string {
   if (typeof value !== 'string' || value.trim() === '' || value.includes('\0')) {
     throw new AppError('INVALID_ARGS', `${name} must be a non-empty string`);
@@ -302,4 +276,24 @@ function digest(value: string): AppleAppContainerJsonWriteResult {
 function requireSuccess(result: ExecResult, message: string): void {
   if (result.exitCode === 0) return;
   throw new AppError('COMMAND_FAILED', message, execFailureDetails(result));
+}
+
+async function inspectContainerDirectory(candidate: string, createMissing: boolean) {
+  try {
+    return await hostFileLstat(candidate);
+  } catch (error) {
+    if (!isMissingPath(error) || !createMissing) throw error;
+    try {
+      await createHostDirectory(candidate);
+    } catch (mkdirError) {
+      if (!isExistingPath(mkdirError)) throw mkdirError;
+    }
+    return await hostFileLstat(candidate);
+  }
+}
+
+function requireContainerPath(value: string): string {
+  const checked = checkAppContainerJsonPath(value);
+  if (!checked.valid) throw new AppError('INVALID_ARGS', checked.message);
+  return checked.path;
 }

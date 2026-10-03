@@ -99,7 +99,7 @@ export function assertPreparedPathUnchanged(snapshot: PreparedPathSnapshot): voi
   }
 }
 
-export function assertPreparedRootUnchanged(root: PreparedProductsRoot): void {
+function assertPreparedRootUnchanged(root: PreparedProductsRoot): void {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(root.path);

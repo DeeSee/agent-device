@@ -46,23 +46,35 @@ import { launchRunnerProcess, type LaunchedRunnerProcess } from './runner-proces
 
 import type { RunnerStartBudget } from './runner-start-budget.ts';
 import { runnerSessions } from './runner-session-registry.ts';
-import {
-  assertRunnerSessionMayStart,
-  measureRunnerStartupStep,
-  stopRunnerSessionInternal,
-  type RunnerSessionOptions,
-} from './runner-session.ts';
+import type { RunnerSessionOptions } from './runner-session.ts';
+type RunnerLaunchControls = {
+  assertRunnerSessionMayStart(expectedRunnerSessionId: string | undefined): void;
+  measureRunnerStartupStep<T>(
+    timings: Record<string, number>,
+    phase: string,
+    task: () => Promise<T> | T,
+  ): Promise<T>;
+  stopRunnerSessionInternal(
+    deviceId: string,
+    session: RunnerSession,
+    options: import('./runner-disposal.ts').RunnerDisposalOptions,
+  ): Promise<void>;
+};
 const RUNNER_STALE_BUNDLE_UNINSTALL_TIMEOUT_MS = 10_000;
 
 const RUNNER_DEVICE_READINESS_BUDGET_MS = 10_000;
 
-export async function startRunnerSessionWithLease(
-  device: DeviceInfo,
-  options: RunnerSessionOptions,
-  budget: RunnerStartBudget,
-  requestedSelection: RunnerLaunchSelection,
-  startConstraints: Readonly<{ excludedPort?: number }>,
-): Promise<RunnerSession> {
+export async function startRunnerSessionWithLease(params: {
+  device: DeviceInfo;
+  options: RunnerSessionOptions;
+  budget: RunnerStartBudget;
+  requestedSelection: RunnerLaunchSelection;
+  startConstraints: Readonly<{ excludedPort?: number }>;
+  controls: RunnerLaunchControls;
+}): Promise<RunnerSession> {
+  const { device, options, budget, requestedSelection, startConstraints, controls } = params;
+  const { assertRunnerSessionMayStart, measureRunnerStartupStep, stopRunnerSessionInternal } =
+    controls;
   const startupTimings: Record<string, number> = {};
   const startupBudget = budget.phase;
   const signal = startupBudget.signal;

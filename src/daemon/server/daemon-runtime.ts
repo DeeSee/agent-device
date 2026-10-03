@@ -320,13 +320,7 @@ function armDaemonMetadataLossWatch(
 export async function startDaemonRuntime(
   options: DaemonRuntimeOptions = {},
 ): Promise<DaemonRuntimeController | null> {
-  const env = options.env ?? process.env;
-  const stdout = options.stdout ?? process.stdout;
-  const stderr = options.stderr ?? process.stderr;
-  const exit = options.exit ?? ((code: number) => process.exit(code));
-  const deviceClaimRoot = openDeviceClaimRoot(
-    options.deviceClaimsDir ?? env.AGENT_DEVICE_CLAIMS_DIR,
-  );
+  const { env, stdout, stderr, exit, deviceClaimRoot } = runtimeHostOptions(options);
   const daemonPaths = resolveDaemonPaths(env.AGENT_DEVICE_STATE_DIR);
   const { baseDir, infoPath, lockPath, logPath, sessionsDir } = daemonPaths;
   const daemonServerMode = resolveDaemonServerMode(env.AGENT_DEVICE_DAEMON_SERVER_MODE);
@@ -356,15 +350,13 @@ export async function startDaemonRuntime(
   const version = readVersion();
   const token = crypto.randomBytes(24).toString('hex');
   const daemonIdentity = readCurrentOwnerIdentity();
-  const daemonProcessStartTime = daemonIdentity.startTime ?? undefined;
+  const daemonProcessStartTime = optionalOwnerStartTime(daemonIdentity);
   const daemonCodeOrigin = resolveDaemonCodeOrigin();
   const daemonCodeSignature = resolveDaemonCodeSignature();
   const providerComposition = await createDefaultProviderRuntimeComposition(env);
   const providerDeviceRuntimes = [...providerComposition.runtimes];
   const deviceRuntimeGateway = createPlatformRuntimeGateway({
-    assertShutdownAllowed: daemonPolicy
-      ? () => assertDaemonPolicyAllowsCapability(daemonPolicy, 'device-shutdown')
-      : undefined,
+    assertShutdownAllowed: daemonShutdownAdmission(daemonPolicy),
     providerRuntimes: providerDeviceRuntimes,
     providerModules: providerComposition.platformModules,
     sessionsDir,
@@ -374,12 +366,7 @@ export async function startDaemonRuntime(
       pidPath: sessionStore.resolveAppLogPidPath(sessionId),
     }),
   });
-  const applicationLifecycle = deviceRuntimeGateway.applicationLifecycle;
-  if (!applicationLifecycle) {
-    throw new AppError('COMMAND_FAILED', 'Platform lifecycle gateway is not configured.', {
-      reason: 'runtime-gateway-missing',
-    });
-  }
+  const applicationLifecycle = requireApplicationLifecycle(deviceRuntimeGateway);
   const providerRuntimeProviders = createProviderDeviceRuntimeRequestProviders(
     providerDeviceRuntimes,
     { providerRuntimeRequiredIds: DEFAULT_PROVIDER_RUNTIME_REQUIRED_IDS },
@@ -934,4 +921,32 @@ export async function cleanupWebBrowserOrphansForDaemonStartup(params: {
       data: { error: error instanceof Error ? error.message : String(error) },
     });
   }
+}
+
+function runtimeHostOptions(options: DaemonRuntimeOptions) {
+  const env = options.env ?? process.env;
+  return {
+    env,
+    stdout: options.stdout ?? process.stdout,
+    stderr: options.stderr ?? process.stderr,
+    exit: options.exit ?? ((code: number) => process.exit(code)),
+    deviceClaimRoot: openDeviceClaimRoot(options.deviceClaimsDir ?? env.AGENT_DEVICE_CLAIMS_DIR),
+  };
+}
+
+function optionalOwnerStartTime(identity: OwnerIdentity): string | undefined {
+  return identity.startTime ?? undefined;
+}
+
+function daemonShutdownAdmission(policy: DaemonPolicy | undefined) {
+  return policy ? () => assertDaemonPolicyAllowsCapability(policy, 'device-shutdown') : undefined;
+}
+
+function requireApplicationLifecycle(gateway: ReturnType<typeof createPlatformRuntimeGateway>) {
+  const lifecycle = gateway.applicationLifecycle;
+  if (!lifecycle)
+    throw new AppError('COMMAND_FAILED', 'Platform lifecycle gateway is not configured.', {
+      reason: 'runtime-gateway-missing',
+    });
+  return lifecycle;
 }

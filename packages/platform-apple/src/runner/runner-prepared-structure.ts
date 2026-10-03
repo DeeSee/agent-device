@@ -74,63 +74,46 @@ function collectProductReferences(
   excludedNodes: ReadonlySet<XmlNode> = new Set(),
 ): readonly string[] {
   if (excludedNodes.has(node)) return Object.freeze([]);
-  const references = new Set<string>();
-  if (node.name === 'dict') {
-    for (const { key, value } of preparedDictionaryEntries(node)) {
-      if (!PRODUCT_REFERENCE_KEYS.has(key)) {
-        for (const reference of collectProductReferences(value, excludedNodes)) {
-          references.add(reference);
-        }
-        continue;
-      }
-      if (ARRAY_PRODUCT_REFERENCE_KEYS.has(key)) {
-        if (value.name !== 'array') {
-          throw invalidPreparedStructure(`XCTest runner ${key} must be an array`);
-        }
-        for (const item of value.children) {
-          if (item.name !== 'string' || !item.text) {
-            throw invalidPreparedStructure(`XCTest runner ${key} contains an invalid path`);
-          }
-          references.add(requireRelocatableProductReference(item.text));
-        }
-      } else {
-        if (value.name !== 'string' || !value.text) {
-          throw invalidPreparedStructure(`XCTest runner ${key} must be a nonempty string`);
-        }
-        references.add(requireRelocatableProductReference(value.text));
-      }
-    }
-  } else {
-    for (const child of node.children) {
-      for (const reference of collectProductReferences(child, excludedNodes)) {
-        references.add(reference);
-      }
-    }
-  }
-  return Object.freeze([...references].sort());
+  const references =
+    node.name === 'dict'
+      ? preparedDictionaryEntries(node).flatMap(({ key, value }) =>
+          collectNamedProductReferences(key, value, excludedNodes),
+        )
+      : node.children.flatMap((child) => collectProductReferences(child, excludedNodes));
+  return Object.freeze([...new Set(references)].sort());
+}
+
+function collectNamedProductReferences(
+  key: string,
+  value: XmlNode,
+  excludedNodes: ReadonlySet<XmlNode>,
+): readonly string[] {
+  if (!PRODUCT_REFERENCE_KEYS.has(key)) return collectProductReferences(value, excludedNodes);
+  if (!ARRAY_PRODUCT_REFERENCE_KEYS.has(key))
+    return [readProductReferenceNode(value, `XCTest runner ${key} must be a nonempty string`)];
+  if (value.name !== 'array')
+    throw invalidPreparedStructure(`XCTest runner ${key} must be an array`);
+  return value.children.map((item) =>
+    readProductReferenceNode(item, `XCTest runner ${key} contains an invalid path`),
+  );
+}
+
+function readProductReferenceNode(node: XmlNode, message: string): string {
+  if (node.name !== 'string' || !node.text) throw invalidPreparedStructure(message);
+  return requireRelocatableProductReference(node.text);
 }
 
 function requireRelocatableProductReference(
   value: string,
   requiredPrefix?: '__TESTHOST__/' | '__TESTROOT__/',
 ): string {
-  const prefix = value.startsWith('__TESTROOT__/')
-    ? '__TESTROOT__/'
-    : value.startsWith('__TESTHOST__/')
-      ? '__TESTHOST__/'
-      : undefined;
-  const relativePath = prefix ? value.slice(prefix.length) : '';
-  const normalized = relativePath ? relativePath.split('/').filter(Boolean).join('/') : '';
-  if (
-    !prefix ||
-    (requiredPrefix !== undefined && prefix !== requiredPrefix) ||
-    !relativePath ||
-    relativePath.startsWith('/') ||
-    normalized !== relativePath ||
-    relativePath.split('/').some((component) => component === '.' || component === '..')
-  ) {
+  const prefixes = ['__TESTROOT__/', '__TESTHOST__/'] as const;
+  const prefix = prefixes.find((candidate) => value.startsWith(candidate));
+  if (!prefix || (requiredPrefix !== undefined && prefix !== requiredPrefix))
     throw invalidPreparedStructure('XCTest runner product reference is not relocatable');
-  }
+  const components = value.slice(prefix.length).split('/');
+  if (!components.every((component) => component !== '' && component !== '.' && component !== '..'))
+    throw invalidPreparedStructure('XCTest runner product reference is not relocatable');
   return value;
 }
 

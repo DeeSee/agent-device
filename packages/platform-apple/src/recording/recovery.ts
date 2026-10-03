@@ -462,25 +462,36 @@ function decodeRunnerDescriptor(body: Record<string, unknown>, outputPath: strin
 }
 
 function decodeRunnerRecordingAuthority(value: unknown): AppleRunnerRecordingAuthority | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const authority = value as Partial<AppleRunnerRecordingAuthority>;
-  const identity = authority.launchIdentity;
-  return isNonemptyString(authority.runnerSessionId) &&
-    isNonemptyString(authority.startCommandId) &&
-    identity !== undefined &&
-    isNonemptyString(identity.selectorFingerprint) &&
-    isNonemptyString(identity.testHostContainerBundleId) &&
-    isOptionalCanonicalRemotePath(authority.remotePath)
-    ? Object.freeze({
-        runnerSessionId: authority.runnerSessionId,
-        startCommandId: authority.startCommandId,
-        launchIdentity: Object.freeze({
-          selectorFingerprint: identity.selectorFingerprint,
-          testHostContainerBundleId: identity.testHostContainerBundleId,
-        }),
-        ...(authority.remotePath === undefined ? {} : { remotePath: authority.remotePath }),
-      })
-    : null;
+  if (!isRecord(value)) return null;
+  const identity = decodeRecordingLaunchIdentity(value.launchIdentity);
+  if (
+    !isNonemptyString(value.runnerSessionId) ||
+    !isNonemptyString(value.startCommandId) ||
+    !identity ||
+    !isOptionalCanonicalRemotePath(value.remotePath)
+  )
+    return null;
+  return Object.freeze({
+    runnerSessionId: value.runnerSessionId,
+    startCommandId: value.startCommandId,
+    launchIdentity: identity,
+    ...(value.remotePath === undefined ? {} : { remotePath: value.remotePath }),
+  });
+}
+
+function decodeRecordingLaunchIdentity(
+  value: unknown,
+): AppleRunnerRecordingAuthority['launchIdentity'] | null {
+  if (
+    !isRecord(value) ||
+    !isNonemptyString(value.selectorFingerprint) ||
+    !isNonemptyString(value.testHostContainerBundleId)
+  )
+    return null;
+  return Object.freeze({
+    selectorFingerprint: value.selectorFingerprint,
+    testHostContainerBundleId: value.testHostContainerBundleId,
+  });
 }
 
 function isNonemptyString(value: unknown): value is string {

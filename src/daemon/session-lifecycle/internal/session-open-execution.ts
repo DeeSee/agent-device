@@ -356,8 +356,8 @@ async function prepareOpenDispatchSession(params: {
   { type: 'session'; session?: SessionState } | { type: 'response'; response: DaemonResponse }
 > {
   const { req, sessionName, sessionStore, existingSession } = params;
-  const beforeDispatch = req.internal?.openLifecycle?.beforeDispatch;
-  const reserved = existingSession?.deviceClaim?.reservationPhase === 'reserved';
+  const beforeDispatch = beforeOpenDispatch(req);
+  const reserved = sessionIsReserved(existingSession);
   if (!beforeDispatch && !reserved) return { type: 'session', session: existingSession };
   const provisionalSession = createProvisionalOpenDispatchSession(params);
   if (reserved && provisionalSession.deviceClaim) {
@@ -603,4 +603,12 @@ async function rollbackNewSessionClaim(params: {
     phase: 'device_claim_open_effects_unconfirmed',
     data: { deviceKey: ownership.deviceKey, outcome },
   });
+}
+
+function beforeOpenDispatch(req: DaemonRequest) {
+  return req.internal?.openLifecycle?.beforeDispatch;
+}
+
+function sessionIsReserved(session: SessionState | undefined): boolean {
+  return session?.deviceClaim?.reservationPhase === 'reserved';
 }

@@ -135,44 +135,44 @@ async function resolveCoherentTestHostBundleId(
   parsedXctestrun?: Record<string, unknown>,
 ): Promise<string> {
   const parsed = parsedXctestrun ?? (await readApplePlistJson(xctestrunPath));
-  if (!parsed) {
+  if (!parsed)
     throw runnerIdentityError('runner_identity_unbound', 'Failed to read XCTest runner identity');
-  }
   const targets = collectTestTargets(parsed);
-  if (targets.length === 0) {
+  if (targets.length === 0)
     throw runnerIdentityError(
       'runner_identity_unbound',
       'XCTest runner has no configured test-host identity',
     );
-  }
-
   const bundleIds = new Set<string>();
-  for (const target of targets) {
-    const bundleId = nonemptyString(target.TestHostBundleIdentifier);
-    const hostPath = nonemptyString(target.TestHostPath);
-    if (!bundleId || !hostPath) {
-      throw runnerIdentityError(
-        'runner_identity_unbound',
-        'XCTest runner test-host identity is incomplete',
-      );
-    }
-    const resolvedHostPath = resolveTestRootPath(xctestrunPath, hostPath);
-    const hostInfo = await readApplePlistJson(path.join(resolvedHostPath, 'Info.plist'));
-    if (nonemptyString(hostInfo?.CFBundleIdentifier) !== bundleId) {
-      throw runnerIdentityError(
-        'runner_identity_incoherent',
-        'XCTest runner test-host bundle identifier does not match its referenced product',
-      );
-    }
-    bundleIds.add(bundleId);
-  }
-  if (bundleIds.size !== 1) {
+  for (const target of targets)
+    bundleIds.add(await resolveTargetTestHostBundleId(xctestrunPath, target));
+  if (bundleIds.size !== 1)
     throw runnerIdentityError(
       'runner_identity_unbound',
       'XCTest runner has ambiguous test-host container identities',
     );
-  }
-  return Array.from(bundleIds)[0] as string;
+  return [...bundleIds][0] as string;
+}
+
+async function resolveTargetTestHostBundleId(
+  xctestrunPath: string,
+  target: Record<string, unknown>,
+): Promise<string> {
+  const bundleId = nonemptyString(target.TestHostBundleIdentifier);
+  const hostPath = nonemptyString(target.TestHostPath);
+  if (!bundleId || !hostPath)
+    throw runnerIdentityError(
+      'runner_identity_unbound',
+      'XCTest runner test-host identity is incomplete',
+    );
+  const resolvedHostPath = resolveTestRootPath(xctestrunPath, hostPath);
+  const hostInfo = await readApplePlistJson(path.join(resolvedHostPath, 'Info.plist'));
+  if (nonemptyString(hostInfo?.CFBundleIdentifier) !== bundleId)
+    throw runnerIdentityError(
+      'runner_identity_incoherent',
+      'XCTest runner test-host bundle identifier does not match its referenced product',
+    );
+  return bundleId;
 }
 
 function collectTestTargets(parsed: Record<string, unknown>): Record<string, unknown>[] {

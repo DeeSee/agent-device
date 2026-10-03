@@ -45,7 +45,7 @@ function formatRecordSingleOutput(data: Record<string, unknown>, outPath: string
   return lines.join('\n');
 }
 
-export function formatRecordingCadence(value: unknown): string | undefined {
+function formatRecordingCadence(value: unknown): string | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const cadence = value as Record<string, unknown>;
   if (cadence.status === 'unavailable' || cadence.status === 'invalid') {
@@ -53,24 +53,24 @@ export function formatRecordingCadence(value: unknown): string | undefined {
       ? `Cadence: ${cadence.status} (${cadence.reason})`
       : `Cadence: ${cadence.status}`;
   }
-  if (cadence.status !== 'measured') return undefined;
+  return cadence.status === 'measured' ? formatMeasuredCadence(cadence) : undefined;
+}
+
+function formatMeasuredCadence(cadence: Record<string, unknown>): string {
   const details: string[] = [];
-  if (typeof cadence.requestedFps === 'number') {
+  if (typeof cadence.requestedFps === 'number')
     details.push(`requested ${formatCadenceNumber(cadence.requestedFps)} FPS`);
-  }
-  if (typeof cadence.effectiveFps === 'number') {
-    details.push(`measured ${formatCadenceNumber(cadence.effectiveFps)} FPS`);
-  } else {
-    details.push('measured FPS unavailable');
-  }
-  if (typeof cadence.sampleCount === 'number') {
+  details.push(
+    typeof cadence.effectiveFps === 'number'
+      ? `measured ${formatCadenceNumber(cadence.effectiveFps)} FPS`
+      : 'measured FPS unavailable',
+  );
+  if (typeof cadence.sampleCount === 'number')
     details.push(
       `${formatCadenceNumber(cadence.sampleCount)} ${cadence.sampleCount === 1 ? 'sample' : 'samples'}`,
     );
-  }
-  if (typeof cadence.maxInterSampleGapMs === 'number') {
+  if (typeof cadence.maxInterSampleGapMs === 'number')
     details.push(`max gap ${formatCadenceNumber(cadence.maxInterSampleGapMs)}ms`);
-  }
   return `Cadence: ${details.join(', ')}`;
 }
 

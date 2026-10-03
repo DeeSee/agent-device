@@ -70,33 +70,48 @@ async function main(): Promise<void> {
 function parseArguments(args: readonly string[]): Arguments | 'help' {
   if (args[0] === '--') return parseArguments(args.slice(1));
   const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
+  for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
-    if (name === '--help' || name === '-h') return 'help';
-    if (name !== '--variant' && name !== '--output-parent' && name !== '--destination') {
-      throw new AppleRunnerArtifactBuildError(
-        'invalid_options',
-        `Unsupported argument: ${String(name)}`,
-      );
-    }
-    if (values.has(name)) {
-      throw new AppleRunnerArtifactBuildError('invalid_options', `Duplicate argument: ${name}`);
-    }
-    const value = args[index + 1];
-    if (!value || value.startsWith('--')) {
-      throw new AppleRunnerArtifactBuildError('invalid_options', `${name} requires one value`);
-    }
-    values.set(name, value);
-    index += 1;
+    if (isHelpArgument(name)) return 'help';
+    addBuildArgument(values, name, args[index + 1]);
   }
-  const variant = values.get('--variant');
+  return requireBuildArguments(values);
+}
+
+function addBuildArgument(
+  values: Map<string, string>,
+  name: string | undefined,
+  value: string | undefined,
+): void {
+  const key = requireBuildArgumentName(name);
+  if (values.has(key))
+    throw new AppleRunnerArtifactBuildError('invalid_options', `Duplicate argument: ${key}`);
+  values.set(key, requireBuildArgumentValue(key, value));
+}
+
+function requireBuildArgumentName(name: string | undefined): string {
+  if (name === undefined || !['--variant', '--output-parent', '--destination'].includes(name))
+    throw new AppleRunnerArtifactBuildError(
+      'invalid_options',
+      `Unsupported argument: ${String(name)}`,
+    );
+  return name;
+}
+
+function requireBuildArgumentValue(name: string, value: string | undefined): string {
+  if (!value || value.startsWith('--'))
+    throw new AppleRunnerArtifactBuildError('invalid_options', `${name} requires one value`);
+  return value;
+}
+
+function requireBuildArguments(values: ReadonlyMap<string, string>): Arguments {
+  const variant = requireBuildVariant(values.get('--variant'));
   const outputParent = values.get('--output-parent');
-  if ((variant !== 'device' && variant !== 'simulator') || !outputParent) {
+  if (!outputParent)
     throw new AppleRunnerArtifactBuildError(
       'invalid_options',
       '--variant device|simulator and --output-parent are required',
     );
-  }
   return {
     variant,
     outputParent: path.resolve(outputParent),
@@ -119,19 +134,17 @@ function readBuildEnvironment(): AppleRunnerArtifactBuildEnvironment {
 function readBuildSettings(variant: AppleRunnerArtifactVariant): AppleRunnerArtifactBuildSettings {
   const appBundleId =
     process.env.AGENT_DEVICE_IOS_RUNNER_APP_BUNDLE_ID ?? 'com.callstack.agentdevice.runner';
-  const simulator = variant === 'simulator';
+  const signing = (key: string) => (variant === 'simulator' ? null : (process.env[key] ?? null));
   return Object.freeze({
     appBundleId,
     testBundleId: process.env.AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID ?? `${appBundleId}.uitests`,
     architectures: process.env.AGENT_DEVICE_XCUITEST_ARCHS ?? null,
-    developmentTeam: simulator ? null : (process.env.DEVELOPMENT_TEAM ?? null),
-    codeSignIdentity: simulator ? null : (process.env.CODE_SIGN_IDENTITY ?? null),
-    codeSignStyle: simulator ? null : (process.env.CODE_SIGN_STYLE ?? null),
-    provisioningProfileSpecifier: simulator
-      ? null
-      : (process.env.PROVISIONING_PROFILE_SPECIFIER ?? null),
-    codeSigningAllowed: simulator ? null : (process.env.CODE_SIGNING_ALLOWED ?? null),
-    codeSigningRequired: simulator ? null : (process.env.CODE_SIGNING_REQUIRED ?? null),
+    developmentTeam: signing('DEVELOPMENT_TEAM'),
+    codeSignIdentity: signing('CODE_SIGN_IDENTITY'),
+    codeSignStyle: signing('CODE_SIGN_STYLE'),
+    provisioningProfileSpecifier: signing('PROVISIONING_PROFILE_SPECIFIER'),
+    codeSigningAllowed: signing('CODE_SIGNING_ALLOWED'),
+    codeSigningRequired: signing('CODE_SIGNING_REQUIRED'),
   });
 }
 
@@ -143,3 +156,16 @@ main().catch((error: unknown) => {
   process.stderr.write(`${JSON.stringify(typed)}\n${USAGE}\n`);
   process.exitCode = 1;
 });
+
+function isHelpArgument(name: string | undefined): boolean {
+  return name === '--help' || name === '-h';
+}
+
+function requireBuildVariant(value: string | undefined): AppleRunnerArtifactVariant {
+  if (value !== 'device' && value !== 'simulator')
+    throw new AppleRunnerArtifactBuildError(
+      'invalid_options',
+      '--variant device|simulator and --output-parent are required',
+    );
+  return value;
+}

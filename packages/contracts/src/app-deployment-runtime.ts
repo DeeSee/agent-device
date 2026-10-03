@@ -117,3 +117,21 @@ export type AndroidAppDeploymentExecutor = Readonly<{
   ): Promise<MaterializedAppSource>;
   resolveAppPackage(device: DeviceInfo, app: string): Promise<string>;
 }>;
+
+export function checkAppContainerJsonPath(
+  value: unknown,
+): { valid: true; path: string } | { valid: false; message: string } {
+  if (typeof value !== 'string' || value.trim() === '' || value.includes('\0'))
+    return { valid: false, message: 'containerPath must be a non-empty string' };
+  if (
+    value.length > 1024 ||
+    value.startsWith('/') ||
+    value.includes('\\') ||
+    value.split('/').some((part) => part === '' || part === '.' || part === '..')
+  )
+    return {
+      valid: false,
+      message: 'containerPath must be a normalized relative app data container JSON path',
+    };
+  return { valid: true, path: value };
+}

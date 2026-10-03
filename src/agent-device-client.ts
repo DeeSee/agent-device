@@ -505,12 +505,12 @@ export function createAgentDeviceClient(
         const screenshot = normalizeScreenshotCaptureResult(data, session);
         return {
           bytes: capture.bytes,
-          width: screenshot?.width,
-          height: screenshot?.height,
-          logicalWidth: screenshot?.logicalWidth,
-          logicalHeight: screenshot?.logicalHeight,
-          pixelDensity: screenshot?.pixelDensity,
-          overlayRefs: screenshot?.overlayRefs,
+          width: screenshot.width,
+          height: screenshot.height,
+          logicalWidth: screenshot.logicalWidth,
+          logicalHeight: screenshot.logicalHeight,
+          pixelDensity: screenshot.pixelDensity,
+          overlayRefs: screenshot.overlayRefs,
           displayRotation: screenshot.displayRotation,
           warnings: screenshot.warnings,
           identifiers: { session },

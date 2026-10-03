@@ -278,12 +278,7 @@ async function closeReservedSession(params: {
   sessionStore: SessionStore;
 }): Promise<DaemonResponse> {
   const { req, sessionName, session, sessionStore } = params;
-  if (
-    (req.positionals?.length ?? 0) > 0 ||
-    req.flags?.shutdown === true ||
-    (req.flags?.saveScript !== undefined && req.flags.saveScript !== false) ||
-    req.internal?.closeAppOnly === true
-  ) {
+  if (!reservedCloseOptionsAllowed(req)) {
     return errorResponse(
       'INVALID_ARGS',
       'An unlaunched reservation can only be closed without app, shutdown, or script options.',
@@ -517,4 +512,11 @@ async function closeWithoutSession(params: {
       ...successText(`Closed: ${req.positionals[0]}`),
     },
   };
+}
+
+function reservedCloseOptionsAllowed(req: DaemonRequest): boolean {
+  const flags = req.flags ?? {};
+  if ((req.positionals?.length ?? 0) > 0) return false;
+  if (flags.shutdown === true || req.internal?.closeAppOnly === true) return false;
+  return flags.saveScript === undefined || flags.saveScript === false;
 }

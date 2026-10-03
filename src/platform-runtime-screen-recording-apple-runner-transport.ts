@@ -96,12 +96,8 @@ async function startLocalAppleRunnerRecording({
   iosXctestDerivedDataPath,
   iosXctestEnvDir,
 }: AppleRunnerScreenRecordingStartRequest): Promise<AppleRunnerScreenRecordingStartResult> {
-  const {
-    acquireRunnerRecordingPin,
-    disposeRunnerAfterRejectedRecordingStart,
-    rollbackRunnerRecordingPin,
-    runAppleRunnerCommandWithReceipt,
-  } = await loadAppleRunnerRecordingOperations();
+  const { acquireRunnerRecordingPin, runAppleRunnerCommandWithReceipt } =
+    await loadAppleRunnerRecordingOperations();
   const { withRunnerCommandId } = await loadAppleRunnerRecordingOperations();
   const recordingFileName = `agent-device-recording-${Date.now()}.mp4`;
   const remotePath =
@@ -133,32 +129,42 @@ async function startLocalAppleRunnerRecording({
       expectedRunnerLaunchIdentity: recordingAuthority.launchIdentity,
     });
   } catch (error) {
-    const { runnerCommandDispatchWasAttempted, runnerCommandWasRejected } =
-      await loadAppleRunnerRecordingOperations();
-    const rejected = runnerCommandWasRejected(error);
-    if (!runnerCommandDispatchWasAttempted(error)) {
-      await rollbackRunnerRecordingPin(device.id, recordingAuthority);
-      throw error;
-    }
-    if (rejected) {
-      if (runnerRejectedUntrackedRecording(error)) {
-        try {
-          await disposeRunnerAfterRejectedRecordingStart(device.id, recordingAuthority);
-        } catch (resetError) {
-          throw preserveRecordingRejection(error, resetError);
-        }
-      } else {
-        await rollbackRunnerRecordingPin(device.id, recordingAuthority);
-      }
-      throw error;
-    }
-    return freezeRunnerStartResult(recordingAuthority, 'uncertain');
+    return await recoverRunnerRecordingStartFailure(device, recordingAuthority, error);
   }
   return freezeRunnerStartResult(
     recordingAuthority,
     signal?.aborted ? 'uncertain' : 'active',
     execution.data,
   );
+}
+
+async function recoverRunnerRecordingStartFailure(
+  device: DeviceInfo,
+  recordingAuthority: RunnerRecordingAuthority,
+  error: unknown,
+): Promise<AppleRunnerScreenRecordingStartResult> {
+  const { disposeRunnerAfterRejectedRecordingStart, rollbackRunnerRecordingPin } =
+    await loadAppleRunnerRecordingOperations();
+  const { runnerCommandDispatchWasAttempted, runnerCommandWasRejected } =
+    await loadAppleRunnerRecordingOperations();
+  const rejected = runnerCommandWasRejected(error);
+  if (!runnerCommandDispatchWasAttempted(error)) {
+    await rollbackRunnerRecordingPin(device.id, recordingAuthority);
+    throw error;
+  }
+  if (rejected) {
+    if (runnerRejectedUntrackedRecording(error)) {
+      try {
+        await disposeRunnerAfterRejectedRecordingStart(device.id, recordingAuthority);
+      } catch (resetError) {
+        throw preserveRecordingRejection(error, resetError);
+      }
+    } else {
+      await rollbackRunnerRecordingPin(device.id, recordingAuthority);
+    }
+    throw error;
+  }
+  return freezeRunnerStartResult(recordingAuthority, 'uncertain');
 }
 
 function preserveRecordingRejection(error: unknown, resetError: unknown): AppError {

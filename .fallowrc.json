@@ -27,6 +27,7 @@
     // dependency analysis cannot follow the runCmdSync string path to it.
     "test/integration/support/exit-after-flush.ts",
     "src/cli/update-check-entry.ts",
+    "src/cli/build-local-apple-runner-artifact.ts",
     "examples/sdk/client-session.ts",
     "examples/sdk/metro-runtime.ts",
     "examples/sdk/contracts-result.ts",

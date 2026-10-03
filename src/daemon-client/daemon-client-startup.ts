@@ -47,107 +47,161 @@ const DAEMON_STARTUP_ATTEMPTS = 2;
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES = 64_000;
 
+type DaemonStartupContext = Readonly<{
+  settings: DaemonClientSettings;
+  readReusableLocalDaemon: ReuseLocalDaemon;
+  signal?: AbortSignal;
+  deadlineMs: number;
+}>;
+
+type DaemonStartupDiagnostics = {
+  lockRecoveryCount: number;
+  cleanupResults: DaemonStartupCleanupResult[];
+  startError?: string;
+  daemonProcess?: ExecDetachedExit | { pid: number };
+};
+
+type DaemonStartupAttempt = { kind: 'ready'; daemon: EnsuredDaemon } | { kind: 'retry' | 'stop' };
+
 export async function startLocalDaemon(
   settings: DaemonClientSettings,
   readReusableLocalDaemon: ReuseLocalDaemon,
   signal?: AbortSignal,
 ): Promise<EnsuredDaemon> {
-  const startupDeadlineMs = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
-  let lockRecoveryCount = 0;
-  const cleanupResults: DaemonStartupCleanupResult[] = [];
-  let startError: string | undefined;
-  let daemonProcess: ExecDetachedExit | { pid: number } | undefined;
+  const context = {
+    settings,
+    readReusableLocalDaemon,
+    signal,
+    deadlineMs: Date.now() + DAEMON_STARTUP_TIMEOUT_MS,
+  };
+  const diagnostics: DaemonStartupDiagnostics = { lockRecoveryCount: 0, cleanupResults: [] };
   for (let attempt = 1; attempt <= DAEMON_STARTUP_ATTEMPTS; attempt += 1) {
     throwIfStartupCancelled(signal);
-    if (Date.now() >= startupDeadlineMs) break;
-    let launch: DaemonStartupLaunch;
-    try {
-      launch = await startDaemon(settings);
-      daemonProcess = { pid: launch.pid };
-    } catch (error) {
-      if (isRequestCanceledError(error)) throw error;
-      startError = error instanceof Error ? error.message : String(error);
-      const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'start_error');
-      cleanupResults.push(cleanup);
-      if (cleanupRetainedDaemonOwner(cleanup)) break;
-      if (attempt < DAEMON_STARTUP_ATTEMPTS) {
-        await sleep(150);
-        continue;
-      }
-      break;
-    }
-
-    const startup = await waitForDaemonStartupWithContainment(
-      () =>
-        waitForDaemonStartup(startupDeadlineMs, settings, launch, readReusableLocalDaemon, signal),
-      () => stopOwnedStartupLaunch(launch),
-      () => launch.release(),
-    );
-    if (startup.kind === 'ready') {
-      launch.release();
-      return startup.daemon;
-    }
-    if (startup.kind === 'early_exit') {
-      launch.release();
-      daemonProcess = startup.exit;
-      startError = describeDaemonEarlyExit(startup.exit);
-      const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'start_error');
-      cleanupResults.push(cleanup);
-      if (cleanupRetainedDaemonOwner(cleanup)) break;
-      if (attempt < DAEMON_STARTUP_ATTEMPTS) {
-        await sleep(150);
-        continue;
-      }
-      break;
-    }
-
-    try {
-      await stopOwnedStartupLaunch(launch);
-      launch.release();
-    } catch (error) {
-      startError = error instanceof Error ? error.message : String(error);
-      const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'startup_timeout');
-      cleanupResults.push(cleanup);
-      break;
-    }
-
-    if (await recoverDaemonLockHolder(settings.paths)) {
-      lockRecoveryCount += 1;
-      continue;
-    }
-
-    const metadataState = getDaemonMetadataState(settings.paths);
-    const hasAnotherAttempt = attempt < DAEMON_STARTUP_ATTEMPTS;
-    const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'startup_timeout');
-    cleanupResults.push(cleanup);
-    if (cleanup.retainedInfoProcess || cleanup.retainedLockProcess) {
-      const extended = await waitForDaemonStartup(
-        startupDeadlineMs,
-        settings,
-        launch,
-        readReusableLocalDaemon,
-        signal,
-      );
-      if (extended.kind === 'ready') {
-        launch.release();
-        return extended.daemon;
-      }
-      if (extended.kind === 'early_exit') {
-        launch.release();
-        daemonProcess = extended.exit;
-        startError = describeDaemonEarlyExit(extended.exit);
-      }
-      break;
-    }
-    if (!hasAnotherAttempt) break;
-
-    // Detached daemon startup can race on busy CI hosts; retry when no metadata exists yet.
-    if (!metadataState.hasInfo && !metadataState.hasLock) await sleep(150);
+    if (Date.now() >= context.deadlineMs) break;
+    const outcome = await runDaemonStartupAttempt(context, diagnostics, attempt);
+    if (outcome.kind === 'ready') return outcome.daemon;
+    if (outcome.kind === 'stop') break;
   }
+  throw daemonStartupFailed(settings, diagnostics);
+}
 
+async function runDaemonStartupAttempt(
+  context: DaemonStartupContext,
+  diagnostics: DaemonStartupDiagnostics,
+  attempt: number,
+): Promise<DaemonStartupAttempt> {
+  const { settings, signal, deadlineMs, readReusableLocalDaemon } = context;
+  let launch: DaemonStartupLaunch;
+  try {
+    launch = await startDaemon(settings);
+    diagnostics.daemonProcess = { pid: launch.pid };
+  } catch (error) {
+    if (isRequestCanceledError(error)) throw error;
+    diagnostics.startError = startupErrorMessage(error);
+    return await retryFailedDaemonLaunch(context, diagnostics, attempt);
+  }
+  const startup = await waitForDaemonStartupWithContainment(
+    () => waitForDaemonStartup(deadlineMs, settings, launch, readReusableLocalDaemon, signal),
+    () => stopOwnedStartupLaunch(launch),
+    () => launch.release(),
+  );
+  if (startup.kind === 'ready') {
+    launch.release();
+    return startup;
+  }
+  if (startup.kind === 'early_exit') {
+    recordDaemonEarlyExit(launch, startup.exit, diagnostics);
+    return await retryFailedDaemonLaunch(context, diagnostics, attempt);
+  }
+  return await settleTimedOutDaemonLaunch(context, diagnostics, launch, attempt);
+}
+
+function startupErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function recordDaemonEarlyExit(
+  launch: DaemonStartupLaunch,
+  exit: ExecDetachedExit,
+  diagnostics: DaemonStartupDiagnostics,
+): void {
+  launch.release();
+  diagnostics.daemonProcess = exit;
+  diagnostics.startError = describeDaemonEarlyExit(exit);
+}
+
+async function retryFailedDaemonLaunch(
+  context: DaemonStartupContext,
+  diagnostics: DaemonStartupDiagnostics,
+  attempt: number,
+): Promise<DaemonStartupAttempt> {
+  const cleanup = await cleanupFailedDaemonStartupMetadata(context.settings.paths, 'start_error');
+  diagnostics.cleanupResults.push(cleanup);
+  if (cleanupRetainedDaemonOwner(cleanup) || attempt >= DAEMON_STARTUP_ATTEMPTS)
+    return { kind: 'stop' };
+  await sleep(150);
+  return { kind: 'retry' };
+}
+
+async function settleTimedOutDaemonLaunch(
+  context: DaemonStartupContext,
+  diagnostics: DaemonStartupDiagnostics,
+  launch: DaemonStartupLaunch,
+  attempt: number,
+): Promise<DaemonStartupAttempt> {
+  const { settings } = context;
+  try {
+    await stopOwnedStartupLaunch(launch);
+    launch.release();
+  } catch (error) {
+    diagnostics.startError = startupErrorMessage(error);
+    diagnostics.cleanupResults.push(
+      await cleanupFailedDaemonStartupMetadata(settings.paths, 'startup_timeout'),
+    );
+    return { kind: 'stop' };
+  }
+  if (await recoverDaemonLockHolder(settings.paths)) {
+    diagnostics.lockRecoveryCount += 1;
+    return { kind: 'retry' };
+  }
+  const metadataState = getDaemonMetadataState(settings.paths);
+  const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'startup_timeout');
+  diagnostics.cleanupResults.push(cleanup);
+  if (cleanupRetainedDaemonOwner(cleanup))
+    return await observeRetainedStartupOwner(context, diagnostics, launch);
+  if (attempt >= DAEMON_STARTUP_ATTEMPTS) return { kind: 'stop' };
+  // Detached startup may have raced without publishing metadata yet.
+  if (!metadataState.hasInfo && !metadataState.hasLock) await sleep(150);
+  return { kind: 'retry' };
+}
+
+async function observeRetainedStartupOwner(
+  context: DaemonStartupContext,
+  diagnostics: DaemonStartupDiagnostics,
+  launch: DaemonStartupLaunch,
+): Promise<DaemonStartupAttempt> {
+  const startup = await waitForDaemonStartup(
+    context.deadlineMs,
+    context.settings,
+    launch,
+    context.readReusableLocalDaemon,
+    context.signal,
+  );
+  if (startup.kind === 'ready') {
+    launch.release();
+    return startup;
+  }
+  if (startup.kind === 'early_exit') recordDaemonEarlyExit(launch, startup.exit, diagnostics);
+  return { kind: 'stop' };
+}
+
+function daemonStartupFailed(
+  settings: DaemonClientSettings,
+  diagnostics: DaemonStartupDiagnostics,
+): AppError {
   const state = getDaemonMetadataState(settings.paths);
   const daemonLogTail = readRecentLogTail(settings.paths.logPath);
-  throw new AppError('COMMAND_FAILED', 'Failed to start daemon', {
+  return new AppError('COMMAND_FAILED', 'Failed to start daemon', {
     kind: 'daemon_startup_failed',
     stateDir: settings.paths.baseDir,
     infoPath: settings.paths.infoPath,
@@ -155,10 +209,7 @@ export async function startLocalDaemon(
     logPath: settings.paths.logPath,
     startupTimeoutMs: DAEMON_STARTUP_TIMEOUT_MS,
     startupAttempts: DAEMON_STARTUP_ATTEMPTS,
-    lockRecoveryCount,
-    cleanupResults,
-    startError,
-    daemonProcess,
+    ...diagnostics,
     ...(daemonLogTail ? { daemonLogTail } : {}),
     metadataState: state,
     hint: resolveDaemonStartupHint(state, settings.paths),

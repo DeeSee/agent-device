@@ -1,3 +1,4 @@
+import { checkAppContainerJsonPath } from '@agent-device/contracts/app-deployment-runtime';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { writeAppContainerJsonUse } from '@agent-device/contracts/app-deployment-runtime-plan';
 import type { AppContainerWriteJsonInput } from '@agent-device/contracts/app-deployment-runtime';
@@ -46,18 +47,9 @@ function parseInput(value: unknown): AppContainerWriteJsonInput {
     );
   }
   const app = requireText(value.app, 'app');
-  const containerPath = requireText(value.containerPath, 'containerPath');
-  if (
-    containerPath.length > 1024 ||
-    containerPath.startsWith('/') ||
-    containerPath.includes('\\') ||
-    containerPath.split('/').some((part) => part === '' || part === '.' || part === '..')
-  ) {
-    throw new AppError(
-      'INVALID_ARGS',
-      'containerPath must be a normalized relative app data container JSON path',
-    );
-  }
+  const checkedPath = checkAppContainerJsonPath(value.containerPath);
+  if (!checkedPath.valid) throw new AppError('INVALID_ARGS', checkedPath.message);
+  const containerPath = checkedPath.path;
   if (!isJsonObject(value.value)) {
     throw new AppError('INVALID_ARGS', 'value must be a JSON object');
   }

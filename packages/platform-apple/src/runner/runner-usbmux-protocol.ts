@@ -253,8 +253,7 @@ function readListedDevice(node: XmlNode): ListedUsbmuxDevice | undefined {
   const udid = readDictEntry(properties, 'SerialNumber')?.text;
   const id = Number(readDictEntry(node, 'DeviceID')?.text);
   if (!udid || !Number.isSafeInteger(id) || id <= 0) return undefined;
-  const connectionType = readDictEntry(properties, 'ConnectionType')?.text?.toUpperCase();
-  return { udid, id, ...(connectionType ? { connectionType } : {}) };
+  return { udid, id, ...readConnectionType(properties) };
 }
 
 function readPlistInteger(xml: string, key: string): number | undefined {
@@ -334,4 +333,9 @@ function requireTimeRemaining(timeoutMs: number, action: string): void {
     backend: 'xctest',
     timeoutMs,
   });
+}
+
+function readConnectionType(properties: XmlNode): Pick<ListedUsbmuxDevice, 'connectionType'> {
+  const connectionType = readDictEntry(properties, 'ConnectionType')?.text?.toUpperCase();
+  return connectionType ? { connectionType } : {};
 }

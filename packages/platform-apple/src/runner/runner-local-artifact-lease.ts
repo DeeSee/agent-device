@@ -1,3 +1,11 @@
+import {
+  readStableRunnerFile,
+  copyRunnerArtifactTree,
+  freezeRunnerArtifactTree,
+  frozenRunnerArtifactEntryMode,
+  sha256,
+  snapshotRunnerArtifactTree,
+} from './runner-local-artifact-storage.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -14,13 +22,6 @@ import {
   loadedAgentDeviceVersion,
 } from './runner-package-identity.ts';
 import { parseLocalAppleRunnerArtifactManifest } from './runner-local-artifact-manifest.ts';
-import {
-  copyRunnerArtifactTree,
-  freezeRunnerArtifactTree,
-  frozenRunnerArtifactEntryMode,
-  sha256,
-  snapshotRunnerArtifactTree,
-} from './runner-local-artifact-storage.ts';
 import { verifyAppleRunnerXctestrun } from './runner-prepared-artifact.ts';
 
 type DirectoryIdentity = Readonly<{ device: bigint; inode: bigint }>;
@@ -298,30 +299,16 @@ function requireDirectory(value: string, label: string): string {
 }
 
 function readRegularFile(filePath: string): Buffer {
-  let descriptor: number | undefined;
   try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const before = fs.fstatSync(descriptor);
-    if (!before.isFile() || before.nlink !== 1) throw new Error('unsafe file');
-    const bytes = fs.readFileSync(descriptor);
-    const after = fs.fstatSync(descriptor);
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs
-    ) {
-      throw new Error('file changed while read');
-    }
-    return bytes;
+    return readStableRunnerFile(filePath, (stat) => {
+      if (!stat.isFile() || stat.nlink !== 1) throw new Error('unsafe file');
+    });
   } catch (error) {
     throw new AppleRunnerArtifactBuildError(
       'manifest_invalid',
       'Local runner artifact manifest is missing or unsafe',
       error,
     );
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 

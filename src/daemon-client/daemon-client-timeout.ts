@@ -144,17 +144,7 @@ export function resolveRequestTimeoutHint(params: {
     session,
     action,
   } = params;
-  if (remote) {
-    // A remote daemon survives this client window, so a `record stop` that ran out of time is still
-    // exporting there and its finished file stays retrievable by asking again. A local timeout
-    // resets the daemon mid-export, where that promise would be false.
-    if (command === PUBLIC_COMMANDS.record && action === 'stop') {
-      return `The remote daemon is still exporting the recording. Run agent-device record stop${
-        session ? ` --session ${session}` : ''
-      } again to wait for that export and receive the completed recording.`;
-    }
-    return 'Retry with --debug and verify the remote daemon URL, auth token, and remote host logs.';
-  }
+  if (remote) return remoteRequestTimeoutHint(command, action, session);
   if (!resetDaemon) {
     if (preserveRunner) {
       return `Retry with --debug and check daemon diagnostics logs. The timed-out ${command ?? 'request'} request was canceled; the daemon and XCTest runner were kept alive so the exact durable resource can be retried or recovered.`;
@@ -203,4 +193,20 @@ function resetDaemonAfterTimeout(info: DaemonInfo): { forcedKill: boolean } {
   // the exact PID/start-time owner exited, and deleting its authority here would allow the next
   // request to spawn a competing daemon. The ordinary takeover path performs that verification.
   return { forcedKill };
+}
+
+function remoteRequestTimeoutHint(
+  command: string | undefined,
+  action: string | undefined,
+  session: string | undefined,
+): string {
+  // A remote daemon survives this client window, so a `record stop` that ran out of time is still
+  // exporting there and its finished file stays retrievable by asking again. Local recording timeouts
+  // also preserve the exact daemon and runner authority for retry.
+  if (command === PUBLIC_COMMANDS.record && action === 'stop') {
+    return `The remote daemon is still exporting the recording. Run agent-device record stop${
+      session ? ` --session ${session}` : ''
+    } again to wait for that export and receive the completed recording.`;
+  }
+  return 'Retry with --debug and verify the remote daemon URL, auth token, and remote host logs.';
 }
