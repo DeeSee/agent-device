@@ -8,7 +8,7 @@ import {
   makeClassifyOwnerLivenessViaMocks,
 } from './runner-session-fixtures.ts';
 
-export const mocks: Record<
+const mocks: Record<
   | 'acquireRedirect'
   | 'cleanupTempFile'
   | 'ensureArtifact'
@@ -173,3 +173,5 @@ export function pinnedLease(
 export function hasReason(reason: string) {
   return (error: unknown) => error instanceof AppError && error.details?.reason === reason;
 }
+
+export const runnerRecordingFixture = Object.freeze({ mocks });

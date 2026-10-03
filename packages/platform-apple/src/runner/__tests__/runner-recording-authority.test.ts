@@ -1,4 +1,4 @@
-import { mocks, hasReason } from './runner-recording.fixtures.ts';
+import { runnerRecordingFixture, hasReason } from './runner-recording.fixtures.ts';
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
@@ -10,6 +10,8 @@ import {
   releaseRunnerRecordingPin,
   updateRunnerRecordingPin,
 } from '../runner-recording-authority.ts';
+const { mocks } = runnerRecordingFixture;
+
 test('recording authority blocks cutover and stale recording tokens', async () => {
   const device = { ...IOS_SIMULATOR, id: 'runner-authority-recording-pin' };
   const session = await ensureRunnerSession(device, {});

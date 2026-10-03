@@ -1,8 +1,10 @@
-import { mocks, hasReason } from './runner-recording.fixtures.ts';
+import { runnerRecordingFixture, hasReason } from './runner-recording.fixtures.ts';
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
 import { ensureRunnerSession } from '../runner-session.ts';
+const { mocks } = runnerRecordingFixture;
+
 test('internal selector change restarts the alive runner', async () => {
   const device = { ...IOS_SIMULATOR, id: 'runner-authority-internal-cutover' };
   const session = await ensureRunnerSession(device, {});

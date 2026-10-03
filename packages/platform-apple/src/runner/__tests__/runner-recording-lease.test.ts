@@ -1,4 +1,4 @@
-import { mocks, hasReason, pinnedLease } from './runner-recording.fixtures.ts';
+import { runnerRecordingFixture, hasReason, pinnedLease } from './runner-recording.fixtures.ts';
 import assert from 'node:assert/strict';
 import { expect, test, vi } from 'vitest';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
@@ -16,6 +16,8 @@ import {
   writeRunnerLease,
   type RunnerLeaseCleanupAdapter,
 } from '../runner-lease.ts';
+const { mocks } = runnerRecordingFixture;
+
 test('stale and explicitly owned pinned leases refuse generic cleanup effects', async () => {
   const staleDeviceId = 'runner-authority-stale-pin';
   const ownedDeviceId = 'runner-authority-owned-pin';
