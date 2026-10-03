@@ -194,7 +194,7 @@ extension RunnerTests {
   }
 
   private func runnerAlert(_ modal: ResolvedBlockingSystemModal) -> RunnerAlert? {
-    let buttons = modal.actions.filter { isEnabledElement($0) }
+    let buttons = modal.actions.filter { $0.facts.enabled }.map(\.element)
     guard !buttons.isEmpty else {
       return nil
     }
@@ -263,7 +263,7 @@ extension RunnerTests {
       "done",
       "open",
       "open settings"
-    ].contains(normalized) || normalized.hasPrefix("confirm")
+    ].contains(normalized) || normalized.hasPrefix("allow ") || normalized.hasPrefix("confirm")
   }
 
   private func isDismissButton(_ label: String) -> Bool {

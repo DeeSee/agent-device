@@ -308,7 +308,7 @@ extension RunnerTests {
     deadline: Date,
     penaltyTarget: SnapshotProbePenaltyTarget
   ) -> DataPayload? {
-    boundedBlockingSystemAlertSnapshotBody(
+    boundedSystemModalProbe(
       deadline: deadline,
       penaltyTarget: penaltyTarget
     ) { probeDeadline in
@@ -321,16 +321,29 @@ extension RunnerTests {
     }
   }
 
-  /// The real bounding/hook machinery used by `boundedBlockingSystemAlertSnapshot` above: the
-  /// probe closure it's given always calls `self.blockingSystemAlertSnapshot` in production, and
-  /// in unit-test builds may first consult `systemModalProbeOverrideForTesting`. Keeping this in
-  /// one place means the main-thread dispatch and its penalty hook can never drift between what
-  /// production runs and what the unit tests exercise.
-  private func boundedBlockingSystemAlertSnapshotBody(
+  func boundedBlockingSystemModalPresence(
+    deadline: Date,
+    penaltyTarget: SnapshotProbePenaltyTarget
+  ) -> Bool {
+    let presence: Bool? = boundedSystemModalProbe(
+      deadline: deadline,
+      penaltyTarget: penaltyTarget
+    ) { probeDeadline -> Bool? in
+      #if AGENT_DEVICE_RUNNER_UNIT_TESTS
+      if let override = self.systemModalProbeOverrideForTesting {
+        return override(probeDeadline) == nil ? nil : true
+      }
+      #endif
+      return self.firstBlockingSystemModal(in: self.springboard, deadline: probeDeadline) == nil ? nil : true
+    }
+    return presence == true
+  }
+
+  private func boundedSystemModalProbe<Value>(
     deadline: Date,
     penaltyTarget: SnapshotProbePenaltyTarget,
-    probe: @escaping @MainActor (Date) -> DataPayload?
-  ) -> DataPayload? {
+    probe: @escaping @MainActor (Date) -> Value?
+  ) -> Value? {
     #if os(macOS)
       return nil
     #else

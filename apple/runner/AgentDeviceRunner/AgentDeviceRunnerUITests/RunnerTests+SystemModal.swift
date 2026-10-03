@@ -1,6 +1,47 @@
 import XCTest
 import AgentDeviceSnapshotPresentation
 
+struct SystemModalElementFacts {
+  let type: XCUIElement.ElementType
+  let label: String
+  let identifier: String
+  let frame: CGRect
+  let enabled: Bool
+}
+
+enum SystemModalElementPolicy {
+  static func isActionCandidate(
+    _ facts: SystemModalElementFacts,
+    actionableTypes: Set<XCUIElement.ElementType>
+  ) -> Bool {
+    actionableTypes.contains(facts.type) && !facts.frame.isNull && !facts.frame.isEmpty
+  }
+
+  static func isInformative(
+    _ facts: SystemModalElementFacts,
+    readableTypes: Set<XCUIElement.ElementType>
+  ) -> Bool {
+    readableTypes.contains(facts.type) &&
+      !facts.frame.isNull &&
+      !facts.frame.isEmpty &&
+      !facts.label.isEmpty
+  }
+
+  static func preferredTitle(_ facts: SystemModalElementFacts) -> String {
+    if !facts.label.isEmpty { return facts.label }
+    if !facts.identifier.isEmpty { return facts.identifier }
+    return "System Alert"
+  }
+
+  static func actionKey(_ facts: SystemModalElementFacts) -> String {
+    "\(facts.type.rawValue)-\(facts.frame.origin.x)-\(facts.frame.origin.y)-\(facts.frame.size.width)-\(facts.frame.size.height)-\(facts.label)"
+  }
+
+  static func contentKey(_ facts: SystemModalElementFacts) -> String {
+    "\(actionKey(facts))-\(facts.identifier)"
+  }
+}
+
 extension RunnerTests {
   // MARK: - Blocking System Modal Snapshot
 
@@ -11,53 +52,40 @@ extension RunnerTests {
     guard case .resolved(let resolvedModal) = resolveBlockingSystemModal(deadline: deadline) else {
       return nil
     }
-    let modal = resolvedModal.root
-    let actions = resolvedModal.actions
-
-    let title = preferredSystemModalTitle(modal)
-    guard let modalNode = safeMakeSnapshotNode(
-      element: modal,
+    let modalNode = makeSystemModalSnapshotNode(
+      facts: resolvedModal.rootFacts,
       index: 0,
       type: "Alert",
-      labelOverride: title,
-      identifierOverride: modal.identifier,
+      labelOverride: SystemModalElementPolicy.preferredTitle(resolvedModal.rootFacts),
       depth: 0,
       hittableOverride: true
-    ) else {
-      return nil
-    }
+    )
     var nodes: [PresentedNode] = [modalNode]
 
-    for action in actions {
-      guard let actionNode = safeMakeSnapshotNode(
-        element: action,
+    for action in resolvedModal.actions {
+      let actionNode = makeSystemModalSnapshotNode(
+        facts: action.facts,
         index: nodes.count,
-        type: elementTypeName(action.elementType),
+        type: elementTypeName(action.facts.type),
         depth: 1,
         parentIndex: 0,
         hittableOverride: true
-      ) else {
-        continue
-      }
+      )
       nodes.append(actionNode)
     }
 
-    // Action controls are the interaction contract. Informative text is useful context, but
-    // must not make a usable modal miss the bounded system-modal probe deadline.
-    let contentDeadline = deadline.addingTimeInterval(-0.5)
-    for content in informativeElements(in: modal, deadline: contentDeadline) {
-      guard Date() < contentDeadline,
-            let contentNode = safeMakeSnapshotNode(
-              element: content,
-              index: nodes.count,
-              type: elementTypeName(content.elementType),
-              depth: 1,
-              parentIndex: 0,
-              hittableOverride: false
-            )
-      else {
-        break
-      }
+    for content in informativeSystemModalFacts(
+      in: resolvedModal.root,
+      deadline: deadline
+    ) {
+      let contentNode = makeSystemModalSnapshotNode(
+        facts: content,
+        index: nodes.count,
+        type: elementTypeName(content.type),
+        depth: 1,
+        parentIndex: 0,
+        hittableOverride: false
+      )
       nodes.append(contentNode)
     }
 
@@ -98,6 +126,117 @@ extension RunnerTests {
 
   func safeElementsQuery(_ fetch: () -> [XCUIElement]) -> [XCUIElement] {
     safely("MODAL_QUERY", [], fetch)
+  }
+
+  func materializeBlockingSystemModal(
+    root: XCUIElement,
+    ownerApp: XCUIApplication,
+    deadline: Date
+  ) -> ResolvedBlockingSystemModal? {
+    guard let rootFacts = safeSystemModalElementFacts(root) else { return nil }
+
+    let candidates = materializedSystemModalElements(
+      in: root,
+      matching: actionableTypes,
+      deadline: deadline
+    )
+
+    var actionKeys = Set<String>()
+    var actions: [ResolvedSystemModalAction] = []
+    for candidate in candidates {
+      let facts = candidate.facts
+      if SystemModalElementPolicy.isActionCandidate(
+        facts,
+        actionableTypes: actionableTypes
+      ) {
+        let isHittable = safely("MODAL_ACTION", false) { candidate.element.isHittable }
+        if isHittable {
+          let key = SystemModalElementPolicy.actionKey(facts)
+          if actionKeys.insert(key).inserted {
+            actions.append(ResolvedSystemModalAction(element: candidate.element, facts: facts))
+          }
+        }
+      }
+    }
+
+    return ResolvedBlockingSystemModal(
+      root: root,
+      rootFacts: rootFacts,
+      ownerApp: ownerApp,
+      actions: actions
+    )
+  }
+
+  private func informativeSystemModalFacts(
+    in root: XCUIElement,
+    deadline: Date
+  ) -> [SystemModalElementFacts] {
+    let readableTypes = Set(readableSystemModalTypes)
+    let predicateValues = readableTypes.map { NSNumber(value: $0.rawValue) }
+    let predicate = NSPredicate(format: "elementType IN %@", predicateValues)
+    let elements = safeElementsQuery {
+      root.descendants(matching: .any).matching(predicate).allElementsBoundByIndex
+    }
+
+    var keys = Set<String>()
+    var counts: [XCUIElement.ElementType: Int] = [:]
+    var facts: [SystemModalElementFacts] = []
+    for element in elements {
+      guard Date() < deadline else { break }
+      guard facts.count < readableTypes.count * 2 else { break }
+      let type = safely("MODAL_CONTENT_TYPE", XCUIElement.ElementType.any) {
+        element.elementType
+      }
+      guard readableTypes.contains(type), counts[type, default: 0] < 2 else {
+        continue
+      }
+      guard let candidate = safeSystemModalElementFacts(element),
+            SystemModalElementPolicy.isInformative(
+              candidate,
+              readableTypes: readableTypes
+            )
+      else {
+        continue
+      }
+      let key = SystemModalElementPolicy.contentKey(candidate)
+      guard keys.insert(key).inserted else { continue }
+      counts[candidate.type, default: 0] += 1
+      facts.append(candidate)
+    }
+    return facts
+  }
+
+  private func materializedSystemModalElements(
+    in root: XCUIElement,
+    matching types: Set<XCUIElement.ElementType>,
+    deadline: Date
+  ) -> [(element: XCUIElement, facts: SystemModalElementFacts)] {
+    let predicateValues = types.map { NSNumber(value: $0.rawValue) }
+    let predicate = NSPredicate(format: "elementType IN %@", predicateValues)
+    let elements = safeElementsQuery {
+      root.descendants(matching: .any).matching(predicate).allElementsBoundByIndex
+    }
+
+    var materialized: [(element: XCUIElement, facts: SystemModalElementFacts)] = []
+    for element in elements {
+      guard Date() < deadline else { break }
+      guard let facts = safeSystemModalElementFacts(element) else { continue }
+      materialized.append((element, facts))
+    }
+    return materialized
+  }
+
+  private func safeSystemModalElementFacts(_ element: XCUIElement) -> SystemModalElementFacts? {
+    safely("MODAL_FACTS") {
+      guard let snapshot = try? element.snapshot() else { return nil }
+      return SystemModalElementFacts(
+        type: snapshot.elementType,
+        label: snapshot.label.trimmingCharacters(in: .whitespacesAndNewlines),
+        identifier: snapshot.identifier.trimmingCharacters(in: .whitespacesAndNewlines),
+        frame: snapshot.frame,
+        enabled: snapshot.isEnabled
+      )
+    }
   }
 
   private func safeIsBlockingSystemModal(_ element: XCUIElement, in springboard: XCUIApplication) -> Bool {
@@ -142,22 +281,6 @@ extension RunnerTests {
     }
   }
 
-  private func informativeElements(in element: XCUIElement, deadline: Date) -> [XCUIElement] {
-    var seen = Set<String>()
-    var contents: [XCUIElement] = []
-    for type in readableSystemModalTypes {
-      guard Date() < deadline else { break }
-      for candidate in modalDescendants(in: element, matching: type, limit: 2) {
-        guard Date() < deadline else { return contents }
-        guard let key = safeInformativeElementKey(candidate) else { continue }
-        if seen.contains(key) { continue }
-        seen.insert(key)
-        contents.append(candidate)
-      }
-    }
-    return contents
-  }
-
   private var readableSystemModalTypes: [XCUIElement.ElementType] {
     [.staticText, .textView]
   }
@@ -176,59 +299,28 @@ extension RunnerTests {
     return Array(elements.prefix(limit))
   }
 
-  private func safeInformativeElementKey(_ candidate: XCUIElement) -> String? {
-    safely("MODAL_CONTENT") { () -> String? in
-      let key = systemModalElementKey(candidate)
-      if !candidate.exists { return nil }
-      let frame = candidate.frame
-      if frame.isNull || frame.isEmpty { return nil }
-      let label = candidate.label.trimmingCharacters(in: .whitespacesAndNewlines)
-      if label.isEmpty { return nil }
-      return key
-    }
-  }
-
-  private func systemModalElementKey(_ element: XCUIElement) -> String {
-    let frame = element.frame
-    return "\(element.elementType.rawValue)-\(frame.origin.x)-\(frame.origin.y)-\(frame.size.width)-\(frame.size.height)-\(element.label)-\(element.identifier)"
-  }
-
-  private func preferredSystemModalTitle(_ element: XCUIElement) -> String {
-    let label = element.label
-    if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return label
-    }
-    let identifier = element.identifier
-    if !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return identifier
-    }
-    return "System Alert"
-  }
-
-  private func makeSnapshotNode(
-    element: XCUIElement,
+  private func makeSystemModalSnapshotNode(
+    facts: SystemModalElementFacts,
     index: Int,
     type: String,
     labelOverride: String? = nil,
-    identifierOverride: String? = nil,
     depth: Int,
     parentIndex: Int? = nil,
     hittableOverride: Bool? = nil
   ) -> PresentedNode {
-    let label = (labelOverride ?? element.label).trimmingCharacters(in: .whitespacesAndNewlines)
-    let identifier = (identifierOverride ?? element.identifier).trimmingCharacters(in: .whitespacesAndNewlines)
+    let label = labelOverride ?? facts.label
     return SnapshotPresentation.singleElementRead(
       RawAXNode(
         index: index,
         type: type,
         label: label.isEmpty ? nil : label,
-        identifier: identifier.isEmpty ? nil : identifier,
+        identifier: facts.identifier.isEmpty ? nil : facts.identifier,
         value: nil,
-        rect: SnapshotRect(element.frame),
-        enabled: element.isEnabled,
+        rect: SnapshotRect(facts.frame),
+        enabled: facts.enabled,
         focused: nil,
         selected: nil,
-        hittable: hittableOverride ?? element.isHittable,
+        hittable: hittableOverride ?? false,
         depth: depth,
         parentIndex: parentIndex,
         hiddenContentAbove: nil,
@@ -237,27 +329,5 @@ extension RunnerTests {
     )
   }
 
-  private func safeMakeSnapshotNode(
-    element: XCUIElement,
-    index: Int,
-    type: String,
-    labelOverride: String? = nil,
-    identifierOverride: String? = nil,
-    depth: Int,
-    parentIndex: Int? = nil,
-    hittableOverride: Bool? = nil
-  ) -> PresentedNode? {
-    safely("MODAL_NODE") {
-      makeSnapshotNode(
-        element: element,
-        index: index,
-        type: type,
-        labelOverride: labelOverride,
-        identifierOverride: identifierOverride,
-        depth: depth,
-        parentIndex: parentIndex,
-        hittableOverride: hittableOverride
-      )
-    }
-  }
 }
+

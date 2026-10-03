@@ -705,10 +705,10 @@ extension RunnerTests {
     // read across the main boundary: the penalty an abandoned probe arms carries the identity main
     // holds once the probe starts, not one whose write was still queued behind the block that
     // occupied main (#2781).
-    return boundedBlockingSystemAlertSnapshot(
+    return boundedBlockingSystemModalPresence(
       deadline: probeDeadline,
       penaltyTarget: .mainOwnedTarget
-    ) != nil
+    )
 #else
     return false
 #endif

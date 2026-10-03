@@ -3,6 +3,7 @@ import XCTest
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
 extension RunnerTests {
   func testRemoteHostProbeRunsOnlyWhenSpringboardModalHasNoActions() {
+    XCTAssertTrue(RemoteHostedSystemModalPolicy.shouldProbeRemoteHost(springboardActionCount: nil))
     XCTAssertTrue(RemoteHostedSystemModalPolicy.shouldProbeRemoteHost(springboardActionCount: 0))
     XCTAssertFalse(RemoteHostedSystemModalPolicy.shouldProbeRemoteHost(springboardActionCount: 1))
     XCTAssertFalse(RemoteHostedSystemModalPolicy.shouldProbeRemoteHost(springboardActionCount: 3))

@@ -1,10 +1,16 @@
 import XCTest
 
 extension RunnerTests {
+  struct ResolvedSystemModalAction {
+    let element: XCUIElement
+    let facts: SystemModalElementFacts
+  }
+
   struct ResolvedBlockingSystemModal {
     let root: XCUIElement
+    let rootFacts: SystemModalElementFacts
     let ownerApp: XCUIApplication
-    let actions: [XCUIElement]
+    let actions: [ResolvedSystemModalAction]
   }
 
   enum BlockingSystemModalResolution {
@@ -27,17 +33,15 @@ extension RunnerTests {
       return .absent
     }
 
-    let springboardActions = actionableElements(in: springboardModal)
+    let resolvedSpringboardModal = materializeBlockingSystemModal(
+      root: springboardModal,
+      ownerApp: springboard,
+      deadline: deadline
+    )
     if !RemoteHostedSystemModalPolicy.shouldProbeRemoteHost(
-      springboardActionCount: springboardActions.count
-    ) {
-      return .resolved(
-        ResolvedBlockingSystemModal(
-          root: springboardModal,
-          ownerApp: springboard,
-          actions: springboardActions
-        )
-      )
+      springboardActionCount: resolvedSpringboardModal?.actions.count
+    ), let resolvedSpringboardModal {
+      return .resolved(resolvedSpringboardModal)
     }
 
     guard Date() < deadline, let remoteModal = remoteHostedSystemModal(deadline: deadline) else {
@@ -60,19 +64,24 @@ extension RunnerTests {
       guard RemoteHostedSystemModalPolicy.isEligibleHostState(state) else { continue }
       guard Date() < deadline else { return nil }
 
-      // A dismissed remote host can raise kAXErrorServerNotFound. The safe queries
-      // inside actionableElements turn that disappearance into an empty result.
-      let actions = actionableElements(in: host)
-      guard !actions.isEmpty else { continue }
-      return ResolvedBlockingSystemModal(root: host, ownerApp: host, actions: actions)
+      // A dismissed remote host can raise kAXErrorServerNotFound. Materialization
+      // turns that disappearance into an unresolved candidate instead of leaking it.
+      guard let resolved = materializeBlockingSystemModal(
+        root: host,
+        ownerApp: host,
+        deadline: deadline
+      ), !resolved.actions.isEmpty else {
+        continue
+      }
+      return resolved
     }
     return nil
   }
 }
 
 enum RemoteHostedSystemModalPolicy {
-  static func shouldProbeRemoteHost(springboardActionCount: Int) -> Bool {
-    springboardActionCount == 0
+  static func shouldProbeRemoteHost(springboardActionCount: Int?) -> Bool {
+    springboardActionCount == nil || springboardActionCount == 0
   }
 
   static func isEligibleHostState(_ state: XCUIApplication.State) -> Bool {

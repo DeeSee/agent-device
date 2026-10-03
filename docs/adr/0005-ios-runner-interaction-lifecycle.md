@@ -100,6 +100,14 @@ penalty and private-AX depth state. If that reset cannot be confirmed, or if rel
 reset, the daemon discards the runner session. Other physical Apple OS leaves retain their existing
 runner-restart behavior until separately evidenced.
 
+Target activation establishes foreground intent with XCTest's pre- and post-event quiescence checks
+skipped. The command that follows owns readiness and capture budgets, so a target that never reports
+idle cannot trap the runner before the command begins.
+
+In-app back resolves a named navigation or dismissal control before activation. Sheet handles use
+semantic activation; other resolved controls use the ordinary activation policy. An absent control
+is reported without guessing a coordinate in the navigation bar.
+
 The snapshot surface intentionally has two AX-failure shapes. Interactive fast snapshots return a
 truncated success payload with `runnerFatal` so agents can still see that AX state is unavailable
 and recover with a plain screenshot plus coordinate navigation. Raw or strict snapshot paths keep

@@ -65,7 +65,7 @@ extension RunnerTests {
       return outcome
     }
 #if os(tvOS)
-    return performElementTap(element)
+    return activateElementSemantically(element)
 #else
     let frame = resolvedFrame ?? element.frame
     if !frame.isEmpty {
@@ -74,7 +74,7 @@ extension RunnerTests {
       // selector target semantic, then activate its resolved stable screen point.
       return tapAt(app: app, x: frame.midX, y: frame.midY)
     }
-    return performElementTap(element)
+    return activateElementSemantically(element)
 #endif
   }
 
@@ -108,7 +108,7 @@ extension RunnerTests {
 #endif
   }
 
-  private func performElementTap(_ element: XCUIElement) -> RunnerInteractionOutcome {
+  func activateElementSemantically(_ element: XCUIElement) -> RunnerInteractionOutcome {
 #if os(tvOS)
     return .unsupported(
       message: "element tap is not supported on tvOS; move focus with swipe or scroll, then select the focused element",

@@ -368,7 +368,9 @@ extension RunnerTests {
       // Read the other app's pid before activating: after `activate()` that app is gone from the
       // active set, so the fact would describe the repair instead of the state it repaired (#2682).
       let otherActiveApplicationPid = soleOtherActiveApplicationPid(excluding: Self.processIdentifier(of: target))
-      target.activate()
+      performWithQuiescenceSkippedIfSupported(target, waits: .bothSkipped) {
+        target.activate()
+      }
       pendingTargetActivation = TargetActivationFactPayload(
         reason: reason,
         priorState: Int(initialState.rawValue),

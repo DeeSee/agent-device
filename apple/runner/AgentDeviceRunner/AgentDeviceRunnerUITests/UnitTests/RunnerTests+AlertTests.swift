@@ -2,8 +2,12 @@ import XCTest
 
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
 extension RunnerTests {
-  func testAlertAcceptTreatsOpenAsAffirmative() {
-    XCTAssertTrue(isAcceptButton("Open"))
+  func testAlertAcceptTreatsAllowPrefixesAsAffirmative() {
+    for label in ["Open", "Allow", "Allow Once", "Allow While Using App"] {
+      XCTAssertTrue(isAcceptButton(label))
+    }
+    XCTAssertFalse(isAcceptButton("Don't Allow"))
+    XCTAssertFalse(isAcceptButton("Don’t Allow"))
   }
 }
 #endif
