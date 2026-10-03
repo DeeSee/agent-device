@@ -15,12 +15,23 @@ export function recordingRunnerProvider(
   calls: RecordedRunnerCall[],
   results: Partial<Record<RunnerCommand['command'], Record<string, unknown>>> = {},
 ): AppleRunnerProvider {
+  const runCommand: AppleRunnerProvider['runCommand'] = async (_device, command, options) => {
+    calls.push({ command, options });
+    return results[command.command] ?? runnerResultFor(command);
+  };
   return {
     hasLiveSession: () => true,
-    runCommand: async (_device, command, options) => {
-      calls.push({ command, options });
-      return results[command.command] ?? runnerResultFor(command);
-    },
+    runCommand,
+    runCommandWithReceipt: async (device, command, options) => ({
+      data: await runCommand(device, command, options),
+      receipt: {
+        runnerSessionId: `fixture:${device.id}`,
+        launchIdentity: {
+          selectorFingerprint: 'request-fixture',
+          testHostContainerBundleId: 'com.example.runner.xctrunner',
+        },
+      },
+    }),
   };
 }
 

@@ -85,7 +85,6 @@ const UNDESCRIBED_TOOL_INPUTS = new Set([
   'record.path',
   'record.quality',
   'record.recordingScope',
-  'reinstall.app',
   'replay.backend',
   'replay.env',
   'replay.force',

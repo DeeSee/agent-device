@@ -123,7 +123,7 @@ test('handleFindCommands wait reports sparse verdict through selector runtime ro
       quality: {
         state: 'sparse',
         backend: 'private-ax',
-        reason: 'sparse tree',
+        reason: 'capture_sparse',
         reasonCode: 'sparse-tree',
       },
       nodes: [
@@ -146,7 +146,7 @@ test('handleFindCommands wait reports sparse verdict through selector runtime ro
     code: 'COMMAND_FAILED',
     message: 'find could not read the current accessibility tree',
     details: {
-      reason: 'sparse tree',
+      reason: 'capture_sparse',
       hint: expect.stringContaining('snapshot quality verdict is sparse'),
     },
   });

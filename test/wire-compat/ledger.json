@@ -180,7 +180,7 @@
     "src/remote/upload-stream.ts#parseNonNegativeIntegerHeader": "sha256:5cbe9c6994459d673d988a51407e65556e28175b187ce0a9d27cbb6331962834",
     "src/remote/upload-stream.ts#parseUploadResumeOffset": "sha256:297184ea22a6dc1cda9aee17034122ae0ea2f43d0355647f6fcf02f3f4b5ca0e",
     "src/remote/upload-stream.ts#streamFileToHttpRequest": "sha256:ce07ea33a275e06e4cceaf0c75a079bd0c7938f36df6817407dbb1cc8c4ff900",
-    "src/remote/upload-stream.ts#streamFileToHttpRequestAttempt": "sha256:aa73fb51890ca5e43d4aa80c1d2124b574568380a73b19eae7da0ee3e3e7acf8",
+    "src/remote/upload-stream.ts#streamFileToHttpRequestAttempt": "sha256:c92ac419cc0b2929362dedab42ed504c10b3cc073d95b3def93b94af905ed7b7",
     "packages/contracts/src/daemon-http.ts#DAEMON_HTTP_INSTANCE_HEADER": "sha256:d2bb3f4846470188a0fc1724271da0f0bcbdf2337bd6bf331508142cadcb65d8",
     "packages/contracts/src/daemon-http.ts#DAEMON_HTTP_UPSTREAM_INSTANCE_HEADER": "sha256:4564c2ce437d30d7a823e3326f4375c0750ba8d42bec22b4d02e8eb7f7db2973",
     "packages/contracts/src/daemon-http.ts#DAEMON_HTTP_INSTANCE_MISMATCH_HEADER": "sha256:a197edaf7f9fa94a6aab269856aa852da3204cc586f5fd23198689eb11908b61",
@@ -207,7 +207,7 @@
     {
       "declaration": "src/remote/daemon-artifacts.ts#DownloadRemoteArtifactParams",
       "digest": "sha256:3ec63be2dbdb542e30b19d1500bc16874607823afb7ae392e92b0b535865859e",
-      "rationale": "#2246 adds the optional isDirectory field. It is pure client-local state — never serialized, never sent to the daemon — that tells the CLIENT'S OWN download logic to extract a tar body instead of writing it verbatim; the GET /artifacts/:id request and response framing are unchanged. Every existing call site (screenshot, recording) omits it and keeps writing a single file exactly as before."
+      "rationale": "#2246 adds the optional isDirectory field. It is pure client-local state \u2014 never serialized, never sent to the daemon \u2014 that tells the CLIENT'S OWN download logic to extract a tar body instead of writing it verbatim; the GET /artifacts/:id request and response framing are unchanged. Every existing call site (screenshot, recording) omits it and keeps writing a single file exactly as before."
     },
     {
       "declaration": "src/remote/daemon-artifacts.ts#downloadRemoteArtifact",
@@ -222,7 +222,7 @@
     {
       "declaration": "src/daemon-client/daemon-client-rpc.ts#buildHttpRpcPayload",
       "digest": "sha256:caddf184cd57a41d9910c414bba72ce5a0503e22a2a4ef3a47f95fed67037127",
-      "rationale": "#2110 added the optional providerApp parameter to lease allocation; #2494 extends the same additive projection to the full provider-allocation flag set the lease-lifecycle provider reads in prepareSession — device selection (platform, device), the app/os, the session-naming fields, and the configured device-feature and AWS knobs — so a fresh remote allocation reaches BrowserStack/AWS with a named, configured session instead of failing on a missing --device/--platform or landing in Untitled Project/Build. Producer and consumer both read one shared projection (readLeaseAllocateProviderFlags). Every field is optional and forwarded only when the caller supplied it: a released protocol-2 daemon ignores unknown JSON-RPC parameters, and a request carrying none of these retains the previous payload byte-for-byte."
+      "rationale": "#2110 added the optional providerApp parameter to lease allocation; #2494 extends the same additive projection to the full provider-allocation flag set the lease-lifecycle provider reads in prepareSession \u2014 device selection (platform, device), the app/os, the session-naming fields, and the configured device-feature and AWS knobs \u2014 so a fresh remote allocation reaches BrowserStack/AWS with a named, configured session instead of failing on a missing --device/--platform or landing in Untitled Project/Build. Producer and consumer both read one shared projection (readLeaseAllocateProviderFlags). Every field is optional and forwarded only when the caller supplied it: a released protocol-2 daemon ignores unknown JSON-RPC parameters, and a request carrying none of these retains the previous payload byte-for-byte."
     },
     {
       "declaration": "src/daemon/server/http-server.ts#toLeaseDaemonRequest",
@@ -282,7 +282,7 @@
     {
       "declaration": "src/daemon/server/http-server.ts#authorizeAuxiliaryHttpRequest",
       "digest": "sha256:1c323f97c3cefec8f95633b6abd127342bf75494bfb109d1cc6eadf3ceacaeae",
-      "rationale": "#2198 context: adds one optional field to the value this DAEMON-INTERNAL gate hands its own route handlers — sessionNamespace, the caller's tenant plus whether the daemon partitioned that caller's session names. Nothing about it is serialized: no request header is read that was not read before, no response field is added, and a refusal keeps the same 401 {ok:false,error,code} REST body sendRestJsonError already sent. What it enables is a refusal DROPPED, never one added — an unattested (client-declared) tenant no longer has the <tenant>: prefix rule applied to it, because scopeRequestSession never applied that prefix to its sessions either. A released peer that now gets 200 where it got 401 is getting the ndjson record it asked for and already parses."
+      "rationale": "#2198 context: adds one optional field to the value this DAEMON-INTERNAL gate hands its own route handlers \u2014 sessionNamespace, the caller's tenant plus whether the daemon partitioned that caller's session names. Nothing about it is serialized: no request header is read that was not read before, no response field is added, and a refusal keeps the same 401 {ok:false,error,code} REST body sendRestJsonError already sent. What it enables is a refusal DROPPED, never one added \u2014 an unattested (client-declared) tenant no longer has the <tenant>: prefix rule applied to it, because scopeRequestSession never applied that prefix to its sessions either. A released peer that now gets 200 where it got 401 is getting the ndjson record it asked for and already parses."
     },
     {
       "declaration": "src/daemon/request-diagnostics-http.ts#RequestDiagnosticsHttpAuthorizer",
@@ -327,7 +327,7 @@
     {
       "declaration": "src/remote/upload-client.ts#tryDirectUploadWithResume",
       "digest": "sha256:67596a2ff2b8a5402566c3b7b99a6fa1baaf9d5de3d647bf35398185cc45eea6",
-      "rationale": "#2946 stops a canceled upload from re-preflighting and lifts the retry leg into its own function. The request sequence a daemon sees — preflight, direct PUT, finalize, or the legacy fallback after a retryable failure — is unchanged."
+      "rationale": "#2946 stops a canceled upload from re-preflighting and lifts the retry leg into its own function. The request sequence a daemon sees \u2014 preflight, direct PUT, finalize, or the legacy fallback after a retryable failure \u2014 is unchanged."
     },
     {
       "declaration": "src/remote/upload-client.ts#finalizeDirectUpload",
@@ -343,11 +343,6 @@
       "declaration": "src/remote/upload-stream.ts#streamFileToHttpRequest",
       "digest": "sha256:ce07ea33a275e06e4cceaf0c75a079bd0c7938f36df6817407dbb1cc8c4ff900",
       "rationale": "#2946 widens the options with an optional abort signal handed to node:http.request. The request line, headers built by buildUploadRequestHeaders, and piped payload are unchanged, so an older daemon's 200/308 handling is unaffected."
-    },
-    {
-      "declaration": "src/remote/upload-stream.ts#streamFileToHttpRequestAttempt",
-      "digest": "sha256:aa73fb51890ca5e43d4aa80c1d2124b574568380a73b19eae7da0ee3e3e7acf8",
-      "rationale": "#2946 passes the optional abort signal to the request and rejects with that signal's reason when it is what ended the stream. The released 308 resume contract is untouched: offset headers, resume start offsets, redirects, and payload bytes are computed exactly as before."
     },
     {
       "declaration": "packages/contracts/src/daemon-http.ts#DaemonHealthPayload",
@@ -433,6 +428,11 @@
       "declaration": "src/daemon-client/daemon-client-transport.ts#readDaemonHttpHealth",
       "digest": "sha256:eef0e153eb6f0bc02175e464dd6d98559b500b65ea8c74ba2203cfef09ec09a0",
       "rationale": "A restart retry must tell a probe that ran out of time from one that failed, so the client can report the RPC deadline instead of 'Remote daemon is unavailable'. `timedOut` is client-local: the prober sets it on its own timeout and abort paths and never reads it from a /health payload. The health request and the accepted payload fields are unchanged, so a released daemon or proxy is probed and parsed exactly as before."
+    },
+    {
+      "declaration": "src/remote/upload-stream.ts#streamFileToHttpRequestAttempt",
+      "digest": "sha256:c92ac419cc0b2929362dedab42ed504c10b3cc073d95b3def93b94af905ed7b7",
+      "rationale": "Client-side only: cancellation is checked around lazy HTTP loading, and the existing request AbortSignal also cancels the local file pipeline. The signal is never serialized. Existing headers, content bytes, redirect/resume handling, and response framing are unchanged."
     }
   ]
 }

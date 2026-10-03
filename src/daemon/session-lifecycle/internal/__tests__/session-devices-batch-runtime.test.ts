@@ -1,3 +1,5 @@
+import { openDeviceClaimRoot } from '../../../../device-claim-root.ts';
+import { resolveDeviceClaimPath } from '../../../device/device-claim-paths.ts';
 import { test, expect, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -430,7 +432,7 @@ test('devices projects the blocking claim owner and hides provably dead owners',
   const owner = readCurrentOwnerIdentity();
   const writeClaim = (id: string, ownerPid: number, ownerStartTime: string | null) => {
     fs.writeFileSync(
-      path.join(claimsDir, `${id}.json`),
+      resolveDeviceClaimPath(`local:android:none:${id}`, openDeviceClaimRoot(claimsDir)),
       JSON.stringify({
         schemaVersion: 1,
         deviceKey: `local:android:none:${id}`,
@@ -480,7 +482,7 @@ test('an allocator-held claim does not project claimedBy', async () => {
   // allocator-held claim has neither, so a managed identity surfaces unclaimed until the Host
   // inventory filter lands.
   fs.writeFileSync(
-    path.join(claimsDir, 'managed.json'),
+    resolveDeviceClaimPath('local:android:none:emulator-5554', openDeviceClaimRoot(claimsDir)),
     JSON.stringify({
       schemaVersion: 3,
       kind: 'allocator',
@@ -525,7 +527,7 @@ test('a claim never projects onto a same-id device from another platform family'
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
   const owner = readCurrentOwnerIdentity();
   fs.writeFileSync(
-    path.join(claimsDir, 'shared-id.json'),
+    resolveDeviceClaimPath('local:android:none:shared-id', openDeviceClaimRoot(claimsDir)),
     JSON.stringify({
       schemaVersion: 1,
       deviceKey: 'local:android:none:shared-id',

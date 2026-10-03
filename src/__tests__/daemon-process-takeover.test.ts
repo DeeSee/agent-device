@@ -1,3 +1,4 @@
+import { AppError } from '@agent-device/kernel/errors';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -65,7 +66,15 @@ test('does not stop a branch-named daemon when process identity is missing', asy
 
   assert.equal(isAgentDeviceDaemonProcess(pid, undefined), false);
 
-  await stopProcessForTakeover(pid, { ...TAKEOVER_TIMEOUTS, expectedStartTime: undefined });
+  await assert.rejects(
+    stopProcessForTakeover(pid, { ...TAKEOVER_TIMEOUTS, expectedStartTime: undefined }),
+    (error: unknown) => {
+      assert.ok(error instanceof AppError);
+      assert.equal(error.details?.reason, 'daemon_takeover_incomplete');
+      assert.equal(error.details?.phase, 'identity_verification');
+      return true;
+    },
+  );
   assert.equal(isProcessAlive(pid), true);
 });
 

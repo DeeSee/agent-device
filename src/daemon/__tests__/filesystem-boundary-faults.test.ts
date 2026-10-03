@@ -1,13 +1,12 @@
-import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
+import { openDeviceClaimRoot } from '../../device-claim-root.ts';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { afterEach, vi } from 'vitest';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { createDurableResourceEnvelope } from '@agent-device/capture-kit';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { acquireDeviceClaim } from '../device/device-claims.ts';
-import { canonicalLocalDeviceKey } from '../device/device-claim-paths.ts';
+import { canonicalLocalDeviceKey, resolveDeviceClaimPath } from '../device/device-claim-paths.ts';
 import { createDurableCaptureResourceStore } from '@agent-device/capture-kit/durable-capture';
 import { writeDaemonShutdownReport } from '../../daemon-shutdown-report.ts';
 import { SessionScriptWriter, type SessionScriptWriteResult } from '../session-script-writer.ts';
@@ -87,18 +86,15 @@ function createDeviceClaimFixture(root: string): FilesystemBoundaryFixture {
     kind: 'emulator',
     booted: true,
   };
-  process.env.AGENT_DEVICE_CLAIMS_DIR = root;
+  const deviceClaimRoot = openDeviceClaimRoot(root);
   const deviceKey = canonicalLocalDeviceKey(device);
-  const claimPath = path.join(
-    root,
-    `${crypto.createHash('sha256').update(deviceKey).digest('hex')}.json`,
-  );
+  const claimPath = resolveDeviceClaimPath(deviceKey, deviceClaimRoot);
 
   return {
     targetPath: claimPath,
     run: async () =>
       acquireDeviceClaim({
-        deviceClaimRoot: currentTestDeviceClaimRoot(),
+        deviceClaimRoot,
         device,
         session: 'filesystem-fault',
         workspace: process.cwd(),
@@ -155,7 +151,9 @@ function createShutdownReportFixture(root: string): FilesystemBoundaryFixture {
 
 function createSessionStoreFixture(root: string): FilesystemBoundaryFixture {
   const targetPath = path.join(root, 'published-by-teardown.ad');
-  const store = new SessionStore(path.join(root, 'sessions'));
+  const store = new SessionStore(path.join(root, 'sessions'), {
+    deviceClaimRoot: openDeviceClaimRoot(path.join(root, 'claims')),
+  });
   const session = makeRepairCompleteSession('filesystem-fault', {
     scriptPublication: repairPublication('complete', { path: targetPath, force: true }),
   });

@@ -1,5 +1,6 @@
+import { openDeviceClaimRoot } from '../device-claim-root.ts';
+import { resolveDeviceClaimPath } from '../daemon/device/device-claim-paths.ts';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, vi } from 'vitest';
@@ -16,8 +17,7 @@ vi.mock('@agent-device/host-kit/process', async (importOriginal) =>
 );
 
 function hashedClaimPath(claimsDir: string, deviceKey: string): string {
-  const hash = crypto.createHash('sha256').update(deviceKey).digest('hex');
-  return path.join(claimsDir, `${hash}.json`);
+  return resolveDeviceClaimPath(deviceKey, openDeviceClaimRoot(claimsDir));
 }
 
 function writeClaim(

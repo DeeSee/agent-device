@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
+import { AppError } from '@agent-device/kernel/errors';
 import { buildDaemonHttpAuthHeaders } from '@agent-device/contracts/daemon-http';
 import { prepareUploadArtifact, type PreparedUploadArtifact } from './upload-client-artifact.ts';
 import { isRetryableUploadStreamError, streamFileToHttpRequest } from './upload-stream.ts';
@@ -212,12 +212,12 @@ async function uploadLegacyArtifact(options: {
     timeoutHint: 'The upload to the remote daemon exceeded the 5-minute timeout.',
     errorMessage: 'Failed to upload artifact to remote daemon',
     errorHint: 'Verify the remote daemon is reachable and supports artifact uploads.',
+    signal: options.signal,
     progress: {
       stage: 'legacy',
       fileName: artifact.fileName,
       onProgress: options.onProgress,
     },
-    signal: options.signal,
   });
 
   try {
@@ -334,12 +334,12 @@ async function uploadDirectArtifact(
     timeoutHint: 'The direct upload ticket did not accept the artifact within the timeout.',
     errorMessage: 'Failed to upload artifact with direct upload ticket',
     retryable: true,
+    signal,
     progress: {
       stage: 'direct',
       fileName: artifact.fileName,
       onProgress,
     },
-    signal,
   });
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -389,5 +389,5 @@ async function finalizeDirectUpload(options: {
 }
 
 function throwIfUploadCanceled(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw createRequestCanceledError();
+  signal?.throwIfAborted();
 }

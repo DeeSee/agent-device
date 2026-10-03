@@ -42,6 +42,11 @@ test('refuses an optional fact that is present but unreadable rather than droppi
 });
 
 test('names every key of the facet it validates', () => {
-  const declared = Object.keys({ ...FACTS, activeSessionApp: undefined, exportQuality: undefined });
+  const declared = Object.keys({
+    ...FACTS,
+    activeSessionApp: undefined,
+    exportQuality: undefined,
+    requestedFps: undefined,
+  });
   assert.deepEqual([...RECORDING_FACTS_KEYS].sort(), declared.sort());
 });

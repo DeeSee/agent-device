@@ -40,7 +40,7 @@ test('request timeout hint only names Apple runner cleanup on actual evidence', 
       command: 'open',
       appleCleanupEvidence: true,
     }),
-    'Retry with --debug and check daemon diagnostics logs. Timed-out Apple runner xcodebuild processes were terminated when detected.',
+    'Retry with --debug and check daemon diagnostics logs. Timed-out Apple runner xcodebuild processes were terminated when detected. The daemon reset was requested; its metadata remains until a later client confirms that the exact process exited.',
   );
   assert.equal(
     resolveRequestTimeoutHint({
@@ -73,7 +73,7 @@ test('request timeout hint only names Apple runner cleanup on actual evidence', 
       command: 'open',
       appleCleanupEvidence: false,
     }),
-    'Retry with --debug and check daemon diagnostics logs. The daemon was reset after the timeout.',
+    'Retry with --debug and check daemon diagnostics logs. The daemon reset was requested; its metadata remains until a later client confirms that the exact process exited.',
   );
   assert.equal(
     resolveRequestTimeoutHint({
@@ -129,7 +129,7 @@ test('a timed-out remote recording names the retry that returns the export', () 
       action: 'stop',
       session: 'recording',
     }),
-    'Retry with --debug and check daemon diagnostics logs. The daemon was reset after the timeout.',
+    'Retry with --debug and check daemon diagnostics logs. The daemon reset was requested; its metadata remains until a later client confirms that the exact process exited.',
   );
   // `record start` runs no export, so it keeps the generic remote wording.
   assert.equal(

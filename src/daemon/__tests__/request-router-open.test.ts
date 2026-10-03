@@ -1,3 +1,5 @@
+import { openDeviceClaimRoot } from '../../device-claim-root.ts';
+import { resolveDeviceClaimPath } from '../device/device-claim-paths.ts';
 import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 import { legacyDispatchCapture } from './legacy-snapshot-capture-fixture.ts';
@@ -86,7 +88,6 @@ import { AppError } from '@agent-device/kernel/errors';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import { inspectDeviceClaims } from '../device/device-claim-inspection.ts';
 import { spawn } from 'node:child_process';
-import crypto from 'node:crypto';
 import {
   createOwnedProcessRecordStore,
   isProcessAlive,
@@ -703,7 +704,7 @@ function seedForeignRecordingOwner(
 function seedDeadForeignClaim(claimsDir: string, device: DeviceInfo, foreignStateDir: string) {
   const deviceKey = `local:apple:ios:${device.id}`;
   fs.writeFileSync(
-    path.join(claimsDir, `${crypto.createHash('sha256').update(deviceKey).digest('hex')}.json`),
+    resolveDeviceClaimPath(deviceKey, openDeviceClaimRoot(claimsDir)),
     JSON.stringify({
       schemaVersion: 1,
       deviceKey,
@@ -725,13 +726,14 @@ test('open reconciles a foreign dead owner through that owner state dir, never t
   // reconciliation the owner-scoped reconciler. With the caller-scoped
   // reconciler this test goes red — the foreign recording recovery runs
   // against the daemon's own gateway and store instead of the dead owner's.
-  const sessionStore = makeSessionStore('agent-device-router-open-recovery-');
   const device = makeIosDevice('SIM-FOREIGN-RECOVERY');
   mockResolveTargetDevice.mockResolvedValue(device);
   const claimsDir = mkdtempForTestSync('agent-device-router-open-claims-');
   const foreignStateDir = mkdtempForTestSync('agent-device-router-open-foreign-');
   const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
+  const sessionStore = makeSessionStore('agent-device-router-open-recovery-');
+
   const orphan = await spawnOrphanRecorder();
 
   try {
@@ -782,13 +784,13 @@ test('open reconciles a foreign dead owner through that owner state dir, never t
 // raise the stamp above the boot, and the foreign open asks from its own store, which is where
 // reboot-based claim settlement happens.
 test('an open that booted the device keeps the device against a foreign open', async () => {
-  const sessionStore = makeSessionStore('agent-device-router-open-boot-');
-  const foreignStore = makeSessionStore('agent-device-router-open-boot-foreign-');
   const device = makeIosDevice('SIM-COLD-BOOTED');
   mockResolveTargetDevice.mockResolvedValue(device);
   const claimsDir = mkdtempForTestSync('agent-device-router-open-boot-claims-');
   const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
+  const sessionStore = makeSessionStore('agent-device-router-open-boot-');
+  const foreignStore = makeSessionStore('agent-device-router-open-boot-foreign-');
 
   // The fixture's platform tools answer device state through this seam, so a test that wants a boot
   // during preparation arms it here and the fake device reports that boot to every later probe.

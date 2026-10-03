@@ -1,10 +1,11 @@
+import { openDeviceClaimRoot } from '../../device-claim-root.ts';
+import { resolveDeviceClaimPath } from '../device/device-claim-paths.ts';
 import { currentTestDeviceClaimRoot } from '../../__tests__/test-utils/device-claim-store.ts';
 import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 import { test, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
 
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { getResolveTargetDeviceMock } from './request-router-dispatch-mocks.ts';
 
 vi.mock('../device/device-ready.ts', () => ({ ensureDeviceReady: vi.fn(async () => {}) }));
@@ -20,7 +21,7 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
     detachIosRunnerSessionsForShutdown: vi.fn(async () => {}),
     notifyIosRunnerAppRelaunched: vi.fn(async () => {}),
     prewarmAppleRunnerCache: vi.fn(async () => {}),
-    prewarmIosRunner: vi.fn(async () => {}),
+    prewarmIosRunnerSession: vi.fn(async () => {}),
     prepareIosRunner: vi.fn(async () => ({
       runner: { currentUptimeMs: 42 },
       connectMs: 0,
@@ -110,7 +111,7 @@ beforeEach(() => {
 function seedLiveForeignClaim(claimsDir: string, device: DeviceInfo, foreignStateDir: string) {
   const deviceKey = `local:apple:ios:${device.id}`;
   fs.writeFileSync(
-    path.join(claimsDir, `${crypto.createHash('sha256').update(deviceKey).digest('hex')}.json`),
+    resolveDeviceClaimPath(deviceKey, openDeviceClaimRoot(claimsDir)),
     JSON.stringify({
       schemaVersion: 2,
       deviceKey,
@@ -136,13 +137,14 @@ function seedLiveForeignClaim(claimsDir: string, device: DeviceInfo, foreignStat
 test('open takes a live foreign claim whose device rebooted after the claim was taken', async () => {
   // #2538: host-global claims outlive a device reboot while the claiming daemon stays alive, so
   // the device's own boot is the only ownership proof that does, and `open` says what it released.
-  const sessionStore = makeSessionStore('agent-device-router-open-reboot-');
   const device = makeIosDevice('SIM-REBOOTED');
   mockResolveTargetDevice.mockResolvedValue(device);
   const claimsDir = mkdtempForTestSync('agent-device-router-open-reboot-claims-');
   const foreignStateDir = mkdtempForTestSync('agent-device-router-open-reboot-foreign-');
   const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
+  const sessionStore = makeSessionStore('agent-device-router-open-reboot-');
+
   const bootedAtMs = Date.now();
   mockObserveSimulatorBoot.mockResolvedValueOnce({ observed: true, bootedAtMs });
 
@@ -174,12 +176,12 @@ test('open takes a live foreign claim whose device rebooted after the claim was 
 // existing-session open itself: without it, an owner that came back after a reboot still carries a
 // pre-reboot stamp and loses the device to the next caller that asks.
 test('open renews the claim of an existing session that reopened its app after a reboot', async () => {
-  const sessionStore = makeSessionStore('agent-device-router-open-renew-');
   const device = makeIosDevice('SIM-RENEWED');
   mockResolveTargetDevice.mockResolvedValue(device);
   const claimsDir = mkdtempForTestSync('agent-device-router-open-renew-claims-');
   const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
+  const sessionStore = makeSessionStore('agent-device-router-open-renew-');
 
   try {
     const opened = await createOpenHandler(sessionStore)(
@@ -222,13 +224,13 @@ test('open renews the claim of an existing session that reopened its app after a
 // work: a foreign daemon that took the device mid-reopen must produce a refusal, not a successful
 // launch on a device this session no longer owns.
 test('an owner reopen that lost the device mid-flight reports the loss instead of launching', async () => {
-  const sessionStore = makeSessionStore('agent-device-router-open-race-');
   const device = makeIosDevice('SIM-RACED');
   mockResolveTargetDevice.mockResolvedValue(device);
   const claimsDir = mkdtempForTestSync('agent-device-router-open-race-claims-');
   const foreignStateDir = mkdtempForTestSync('agent-device-router-open-race-foreign-');
   const previousClaimsDir = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claimsDir;
+  const sessionStore = makeSessionStore('agent-device-router-open-race-');
 
   try {
     const opened = await createOpenHandler(sessionStore)(

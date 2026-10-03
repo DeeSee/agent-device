@@ -109,12 +109,26 @@ export function createIdleExpiryHarness(): Readonly<{
     makeFixture: (prefix) => {
       const root = mkdtempForTestSync(prefix);
       roots.push(root);
-      return { sessionStore: new SessionStore(path.join(root, 'sessions')), claims: claimStores() };
+      const claims = claimStores();
+      return {
+        sessionStore: new SessionStore(path.join(root, 'sessions'), {
+          deviceClaimRoot: currentTestDeviceClaimRoot(),
+        }),
+        claims,
+      };
     },
     idleClaimedSession: (store, name = 'default') => {
       const session = makeIosSession(name, {
         createdAt: NOW - WINDOW_MS - 1,
-        deviceClaim: { ...CLAIM },
+        deviceClaim: {
+          ...CLAIM,
+          claimRootId: store.resolveDeviceClaimRoot().id,
+          claimBindingId: deviceClaimBindingId(
+            store.resolveDeviceClaimRoot(),
+            CLAIM.deviceKey,
+            CLAIM.ownerToken,
+          ),
+        },
       });
       store.set(name, session);
       return session;
@@ -127,7 +141,7 @@ export function createIdleExpiryHarness(): Readonly<{
     sessionWithLiveClaim: async (fixture, name = 'default') => {
       const { stateDir } = fixture.claims;
       const acquired = await acquireDeviceClaim({
-        deviceClaimRoot: currentTestDeviceClaimRoot(),
+        deviceClaimRoot: fixture.sessionStore.resolveDeviceClaimRoot(),
         device: IOS_SIMULATOR,
         session: name,
         workspace: stateDir,

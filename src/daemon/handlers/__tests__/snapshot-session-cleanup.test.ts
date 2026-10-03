@@ -38,7 +38,7 @@ afterEach(() => {
   setActiveProviderDeviceRuntimes([]);
 });
 
-test('sessionless iOS runner cleanup stops the runner host app', async () => {
+test('sessionless iOS runner cleanup stops the exact runner session', async () => {
   const result = await withSessionlessRunnerCleanup(
     undefined,
     IOS_SIMULATOR,
@@ -47,20 +47,16 @@ test('sessionless iOS runner cleanup stops the runner host app', async () => {
   );
   expect(result).toBe('ok');
   expect(mockStopIosRunnerSession).toHaveBeenCalledWith(IOS_SIMULATOR.id);
-  expect(mockCloseIosApp).toHaveBeenCalledWith(IOS_SIMULATOR, 'com.callstack.agentdevice.runner');
+  expect(mockCloseIosApp).not.toHaveBeenCalled();
 });
 
-test('sessionless iOS runner host close is best effort', async () => {
-  mockCloseIosApp.mockRejectedValueOnce(new Error('terminate failed'));
-  const result = await withSessionlessRunnerCleanup(
-    undefined,
-    IOS_SIMULATOR,
-    returnOk,
-    platformResourceCleanup,
-  );
-  expect(result).toBe('ok');
-  expect(mockStopIosRunnerSession).toHaveBeenCalledWith(IOS_SIMULATOR.id);
-  expect(mockCloseIosApp).toHaveBeenCalledWith(IOS_SIMULATOR, 'com.callstack.agentdevice.runner');
+test('sessionless cleanup reports an unconfirmed exact runner stop', async () => {
+  const failure = new Error('runner stop failed');
+  mockStopIosRunnerSession.mockRejectedValueOnce(failure);
+  await expect(
+    withSessionlessRunnerCleanup(undefined, IOS_SIMULATOR, returnOk, platformResourceCleanup),
+  ).rejects.toBe(failure);
+  expect(mockCloseIosApp).not.toHaveBeenCalled();
 });
 
 test('sessionless cleanup leaves a provider-owned device to its provider', async () => {
