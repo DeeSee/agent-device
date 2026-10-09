@@ -14,7 +14,12 @@
  * not return comparable views of one screen (#1569). Android's helper presentation is included
  * here so its quality verdict uses the same typed contract as the iOS strategy chain.
  */
-export type SnapshotCaptureBackend = 'tree' | 'queries' | 'private-ax' | 'android-helper';
+export type SnapshotCaptureBackend =
+  | 'tree'
+  | 'queries'
+  | 'private-ax'
+  | 'android-helper'
+  | 'simulator-ax-bridge';
 
 /** Internal backends that evidence probes may select explicitly. */
 export type SnapshotPreferredBackend = 'tree' | 'private-ax';

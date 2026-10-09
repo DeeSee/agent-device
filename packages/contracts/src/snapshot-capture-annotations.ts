@@ -21,6 +21,7 @@ const DECLARED_BACKENDS: Record<SnapshotCaptureBackend, true> = {
   queries: true,
   'private-ax': true,
   'android-helper': true,
+  'simulator-ax-bridge': true,
 };
 
 export type SnapshotCaptureAnalysis = {

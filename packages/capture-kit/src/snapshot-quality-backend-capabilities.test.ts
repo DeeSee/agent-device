@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import {
   ANDROID_SNAPSHOT_BACKEND_CAPABILITIES,
   SNAPSHOT_BACKEND_CAPABILITIES,
+  SNAPSHOT_QUALITY_BACKEND_CAPABILITIES,
 } from './snapshot-quality-backend-capabilities.ts';
 
 type SnapshotBackendParityFixture = {
@@ -191,4 +192,14 @@ test('snapshot backend gaps expire on their boundary date', () => {
   expect(validateSnapshotBackendGaps(expiringBackends, '2026-08-21')).toEqual([
     'tree gap deep-extension expiresOn must be after 2026-08-21',
   ]);
+});
+
+test('the simulator bridge is a distinct quality backend outside XCTest CLI strategies', () => {
+  expect(SNAPSHOT_QUALITY_BACKEND_CAPABILITIES['simulator-ax-bridge']).toMatchObject({
+    forceable: false,
+    supportsRawProjection: true,
+    regularDepth: 'presentation-cut',
+    hittable: 'geometric-actionability',
+  });
+  expect(Object.hasOwn(SNAPSHOT_BACKEND_CAPABILITIES, 'simulator-ax-bridge')).toBe(false);
 });

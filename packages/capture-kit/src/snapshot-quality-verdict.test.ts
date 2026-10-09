@@ -156,3 +156,12 @@ test('the contracts re-read calls a verdict a verdict on every payload', () => {
     );
   }
 });
+
+test('bridge quality survives both the capture and serialized response readers', () => {
+  const quality = { state: 'healthy', backend: 'simulator-ax-bridge' };
+  assert.equal(readSnapshotQualityVerdict(quality)?.backend, 'simulator-ax-bridge');
+  assert.deepEqual(
+    readSerializedSnapshotCaptureAnnotations({ snapshotQuality: quality }).snapshotQuality,
+    quality,
+  );
+});

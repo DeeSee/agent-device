@@ -23,10 +23,13 @@ type SnapshotBackendCapability = {
   knownGaps: readonly string[];
 };
 
-type IosSnapshotCaptureBackend = Exclude<SnapshotCaptureBackend, 'android-helper'>;
+type IosRunnerSnapshotCaptureBackend = Exclude<
+  SnapshotCaptureBackend,
+  'android-helper' | 'simulator-ax-bridge'
+>;
 
 type SnapshotBackendCapabilityRegistry = {
-  [Backend in IosSnapshotCaptureBackend]: SnapshotBackendCapability & {
+  [Backend in IosRunnerSnapshotCaptureBackend]: SnapshotBackendCapability & {
     forceable: Backend extends SnapshotPreferredBackend ? true : false;
   };
 };
@@ -88,4 +91,13 @@ export const ANDROID_SNAPSHOT_BACKEND_CAPABILITIES = {
 export const SNAPSHOT_QUALITY_BACKEND_CAPABILITIES = {
   ...SNAPSHOT_BACKEND_CAPABILITIES,
   ...ANDROID_SNAPSHOT_BACKEND_CAPABILITIES,
+  'simulator-ax-bridge': {
+    forceable: false,
+    supportsRawProjection: true,
+    regularDepth: 'presentation-cut',
+    hittable: 'geometric-actionability',
+    deepExtension: 'yes',
+    depthLadder: 'yes',
+    knownGaps: ['remote-content-boundary', 'window-coordinate-space-unresolved', 'custom-actions'],
+  },
 } as const satisfies SnapshotQualityBackendCapabilityRegistry;

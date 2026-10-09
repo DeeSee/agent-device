@@ -15,6 +15,7 @@ import type {
   SnapshotRuntimeAcquiredResult,
 } from '@agent-device/contracts/interactor-types';
 import { AppError } from '@agent-device/kernel/errors';
+import { bridgeSnapshotQuality } from './ios-snapshot-quality.ts';
 
 const IOS_SNAPSHOT_FACT_WARNINGS: Partial<Record<IosSnapshotFact, string>> = {
   'acquisition-depth':
@@ -41,9 +42,11 @@ export function presentIosSnapshotAcquisition(
 
   try {
     const presentation = publishIosSnapshot(input, request);
+    const quality = bridgeSnapshotQuality(acquired.acquisition, presentation, request);
     return {
       backend: 'xctest',
       producer: acquired.acquisition.producer,
+      ...(quality ? { quality } : {}),
       nodes: [...presentation.payload.nodes],
       comparisonIdentity: presentation.comparisonIdentity,
       ...(acquired.acquisition.truncated === undefined

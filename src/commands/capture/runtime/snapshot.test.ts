@@ -807,3 +807,29 @@ test('runtime snapshot warns when its tree was read on a surface still moving af
 
   assert.deepEqual(result.warnings, [formatPostGestureOutcomeWarning(outcome)]);
 });
+
+test('bridge quality reaches the daemon response and session metadata as its own backend', async () => {
+  const quality = { state: 'healthy' as const, backend: 'simulator-ax-bridge' as const };
+  let stored: Parameters<CommandSessionStore['set']>[0] | undefined;
+  const device = createAgentDevice({
+    backend: createSnapshotBackend(() => ({
+      nodes: [{ index: 0, ref: 'e1', depth: 0, type: 'Button', label: 'Dismiss' }],
+      quality,
+      snapshot: makeSnapshotState(
+        [{ index: 0, ref: 'e1', depth: 0, type: 'Button', label: 'Dismiss' }],
+        { backend: 'xctest', producer: 'simulator-ax-bridge', snapshotQuality: quality },
+      ),
+    })),
+    artifacts: createLocalArtifactAdapter(),
+    sessions: {
+      get: () => undefined,
+      set: (record) => {
+        stored = record;
+      },
+    },
+    policy: localCommandPolicy(),
+  });
+  const result = await device.capture.snapshot({ session: 'default' });
+  assert.deepEqual(result.snapshotQuality, quality);
+  assert.deepEqual(stored?.snapshot?.snapshotQuality, quality);
+});

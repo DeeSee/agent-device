@@ -215,6 +215,8 @@ export type IosSnapshotComparisonIdentity = Readonly<{
 }>;
 
 export type IosSnapshotPublication = Readonly<{
+  /** Internal unscoped projection for quality; never part of the public snapshot payload. */
+  qualityNodes?: readonly RawSnapshotNode[];
   payload: IosSnapshotPublishedPayload;
   presentationKey: IosSnapshotPresentationKey;
   comparisonIdentity: IosSnapshotComparisonIdentity;

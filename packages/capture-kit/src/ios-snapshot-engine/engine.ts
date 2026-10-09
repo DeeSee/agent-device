@@ -38,6 +38,7 @@ export function publishIosSnapshot(
   const truncated =
     input.stage === 'acquired' ? input.acquisition.truncated : input.presentation.payload.truncated;
   return {
+    ...(presentation.qualityNodes ? { qualityNodes: presentation.qualityNodes } : {}),
     payload: {
       nodes: attachRefs(presentation.nodes),
       ...(truncated === undefined ? {} : { truncated }),
@@ -80,7 +81,7 @@ function presentAcquiredSnapshot(
       foldPolicy,
     });
     const qualityNodes =
-      request.scope === null
+      request.scope === null && request.depth === null
         ? undefined
         : projectIosQualitySnapshot({
             nodes: sourceNodes,
@@ -133,7 +134,7 @@ function presentAcquiredSnapshot(
     hittabilityAvailable,
   );
   const qualityNodes =
-    request.scope === null
+    request.scope === null && request.depth === null
       ? undefined
       : projectIosQualitySnapshot({
           nodes: folded.nodes,
