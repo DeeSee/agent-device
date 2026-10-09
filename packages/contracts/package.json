@@ -503,6 +503,10 @@
     "./wait-runtime-plan": {
       "types": "./src/wait-runtime-plan.ts",
       "default": "./src/wait-runtime-plan.ts"
+    },
+    "./app-processes-runtime": {
+      "types": "./src/app-processes-runtime.ts",
+      "default": "./src/app-processes-runtime.ts"
     }
   },
   "devDependencies": {

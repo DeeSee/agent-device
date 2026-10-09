@@ -1,3 +1,4 @@
+import { appProcessesUnsupported } from '@agent-device/contracts/app-processes-runtime';
 import type {
   AppDeploymentInput,
   DeployMaterializedAppInput,
@@ -621,6 +622,7 @@ function webDriverFacts(
       deployMaterializedApp: deployment,
       sendPushNotification: pushUnavailable,
       appState: appStateUnavailable,
+      observeAppProcesses: appProcessesUnsupported,
       networkDump: available,
       ...snapshotRuntimeOperationFacts({
         capture: snapshotCell,

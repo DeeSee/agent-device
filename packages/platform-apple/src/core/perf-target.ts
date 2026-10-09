@@ -48,14 +48,15 @@ export function parseApplePsOutput(stdout: string): AppleProcessSample[] {
 export async function resolveAppleExecutable(
   device: DeviceInfo,
   appBundleId: string,
+  signal?: AbortSignal,
 ): Promise<{ executableName: string; executablePath?: string }> {
   const appPath = isMacOs(device)
-    ? await resolveMacOsBundlePath(appBundleId)
-    : await resolveIosSimulatorAppContainer(device, appBundleId);
+    ? await resolveMacOsBundlePath(appBundleId, signal)
+    : await resolveIosSimulatorAppContainer(device, appBundleId, signal);
   const infoPlistPath = isMacOs(device)
     ? path.join(appPath, 'Contents', 'Info.plist')
     : path.join(appPath, 'Info.plist');
-  const executableName = await readInfoPlistString(infoPlistPath, 'CFBundleExecutable');
+  const executableName = await readInfoPlistString(infoPlistPath, 'CFBundleExecutable', signal);
   if (!executableName) {
     throw new AppError('COMMAND_FAILED', `Failed to resolve executable for ${appBundleId}`, {
       appBundleId,
@@ -91,10 +92,11 @@ export async function resolveIosDevicePerfTarget(
   return processes;
 }
 
-async function resolveMacOsBundlePath(appBundleId: string): Promise<string> {
+async function resolveMacOsBundlePath(appBundleId: string, signal?: AbortSignal): Promise<string> {
   const query = `kMDItemCFBundleIdentifier == "${appBundleId.replaceAll('"', String.raw`\"`)}"`;
   const result = requireExecSuccess(
     await runAppleToolCommand('mdfind', [query], {
+      signal,
       allowFailure: true,
       timeoutMs: APPLE_PERF_TIMEOUT_MS,
     }),
@@ -117,6 +119,7 @@ async function resolveMacOsBundlePath(appBundleId: string): Promise<string> {
 async function resolveIosSimulatorAppContainer(
   device: DeviceInfo,
   appBundleId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const args = buildSimctlArgsForDevice(device, [
     'get_app_container',
@@ -126,6 +129,7 @@ async function resolveIosSimulatorAppContainer(
   ]);
   const result = requireExecSuccess(
     await runXcrun(args, {
+      signal,
       allowFailure: true,
       timeoutMs: APPLE_PERF_TIMEOUT_MS,
     }),

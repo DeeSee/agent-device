@@ -1,3 +1,4 @@
+import { appProcessesUnsupported } from '@agent-device/contracts/app-processes-runtime';
 import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import { applicationLifecycleOperationFacts } from '@agent-device/contracts/application-lifecycle-runtime';
 import { elementTextRuntimeOperationFacts } from '@agent-device/contracts/element-text-runtime';
@@ -170,7 +171,9 @@ export function limrunAppLogFacts(
       appLogReattach: available,
       appLogCleanup: available,
       ...deployment,
+      readAppContainerJson: deployment.writeAppContainerJson,
       appState: isAndroid ? available : iosAppStateUnavailable,
+      observeAppProcesses: appProcessesUnsupported,
       networkDump: available,
       screenRecordingStart: available,
       screenRecordingReattach: available,
@@ -239,6 +242,7 @@ export function limrunAppLogRecoveryFacts(
       appLogReattach: available,
       appLogCleanup: available,
       appState: liveSessionUnavailable,
+      observeAppProcesses: appProcessesUnsupported,
       networkDump: liveSessionUnavailable,
       screenRecordingStart: liveSessionUnavailable,
       screenRecordingReattach: liveSessionUnavailable,

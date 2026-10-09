@@ -1,3 +1,4 @@
+import { appProcessesUnsupported } from '@agent-device/contracts/app-processes-runtime';
 import type { EnsureReadyInput } from '@agent-device/contracts/device-readiness-runtime';
 import type { NetworkDumpInput } from '@agent-device/contracts/network-runtime';
 import type {
@@ -320,6 +321,7 @@ export function createAndroidPlatformRuntime(host: PlatformRuntimeHost): Platfor
         ...logs.operations,
         ...deployment,
         appState: device.kind === 'simulator' ? appStateUnavailable : available,
+        observeAppProcesses: appProcessesUnsupported,
         networkDump: available,
         screenRecordingStart: available,
         screenRecordingReattach: available,

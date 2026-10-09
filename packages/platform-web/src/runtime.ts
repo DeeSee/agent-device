@@ -1,3 +1,4 @@
+import { appProcessesUnsupported } from '@agent-device/contracts/app-processes-runtime';
 import {
   type DeviceBinding,
   type RuntimeFacts,
@@ -376,6 +377,7 @@ function webRuntimeFacts(
       appLogReattach: appLogUnavailable,
       appLogCleanup: appLogUnavailable,
       appState: appStateUnavailable,
+      observeAppProcesses: appProcessesUnsupported,
       networkDump: webAvailableFact(Boolean(transport.dump), networkUnavailable),
       screenRecordingStart: webAvailableFact(recordingAvailable, recordingUnavailable),
       screenRecordingReattach: webAvailableFact(recordingAvailable, recordingUnavailable),
@@ -456,6 +458,7 @@ function webRuntimeFacts(
       deployMaterializedApp: readinessUnavailable,
       sendPushNotification: readinessUnavailable,
       writeAppContainerJson: readinessUnavailable,
+      readAppContainerJson: readinessUnavailable,
       shutdownTarget: readinessUnavailable,
       ...webLifecycleFacts(device),
     },

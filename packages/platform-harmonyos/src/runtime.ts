@@ -1,3 +1,4 @@
+import { appProcessesUnsupported } from '@agent-device/contracts/app-processes-runtime';
 import type { DeviceBinding, RuntimeOperationFact } from '@agent-device/contracts/platform-runtime';
 import type {
   PlatformRuntimeHost,
@@ -220,7 +221,9 @@ export function createHarmonyPlatformRuntime(host: PlatformRuntimeHost): Platfor
       operations: {
         ...logs.operations,
         ...deployment,
+        readAppContainerJson: deployment.writeAppContainerJson,
         appState: device.kind === 'simulator' ? appStateUnavailable : available,
+        observeAppProcesses: appProcessesUnsupported,
         networkDump: unavailable,
         screenRecordingStart: recordingFacts,
         screenRecordingReattach: recordingFacts,

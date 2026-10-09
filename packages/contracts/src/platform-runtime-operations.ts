@@ -1,3 +1,4 @@
+import type { AppProcessesRuntimeOperations } from './app-processes-runtime.ts';
 import type { AppLogRuntimeHost, AppLogRuntimeOperations } from './app-log-runtime.ts';
 import type { AppInventoryRuntimeOperations } from './app-inventory-runtime.ts';
 import type {
@@ -63,6 +64,7 @@ export type PlatformRuntimeOperations = AppLogRuntimeOperations &
   AppInventoryRuntimeOperations &
   AppDeploymentRuntimeOperations &
   AppStateRuntimeOperations &
+  AppProcessesRuntimeOperations &
   NetworkRuntimeOperations &
   ScreenRecordingRuntimeOperations &
   ScreenshotRuntimeOperations &
@@ -104,6 +106,7 @@ export const bootTargetHeadlessUse = defineUse({
   required: ['bootTargetHeadless'],
 });
 export const appsRuntimeUse = defineUse({ required: ['ensureReady', 'listApps'] });
+export const appProcessesUse = defineUse({ required: ['observeAppProcesses'] });
 export const captureSnapshotUse = defineUse({ required: ['captureSnapshot'] });
 export const viewportRuntimeUse = defineUse({ required: ['setViewport'] });
 export const focusRuntimeUse = defineUse({ required: ['focusPoint'] });

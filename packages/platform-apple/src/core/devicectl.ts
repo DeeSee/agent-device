@@ -86,9 +86,11 @@ export async function runIosDevicectl(
 export async function listIosDeviceApps(
   device: DeviceInfo,
   filter: 'user-installed' | 'all',
+  signal?: AbortSignal,
 ): Promise<IosAppInfo[]> {
   const payload = await runIosDevicectlJsonCommand(device, {
     jsonPrefix: 'agent-device-ios-apps',
+    signal,
     args: ['devicectl', 'device', 'info', 'apps', '--device', device.id, '--include-all-apps'],
     failureMessage: 'Failed to list iOS apps',
     parseFailureMessage: 'Failed to parse iOS apps list',
@@ -96,9 +98,13 @@ export async function listIosDeviceApps(
   return filterIosDeviceApps(parseIosDeviceAppsPayload(payload), filter);
 }
 
-async function listIosDeviceProcesses(device: DeviceInfo): Promise<IosDeviceProcessInfo[]> {
+async function listIosDeviceProcesses(
+  device: DeviceInfo,
+  signal?: AbortSignal,
+): Promise<IosDeviceProcessInfo[]> {
   const payload = await runIosDevicectlJsonCommand(device, {
     jsonPrefix: 'agent-device-ios-processes',
+    signal,
     args: ['devicectl', 'device', 'info', 'processes', '--device', device.id],
     failureMessage: 'Failed to list iOS processes',
     parseFailureMessage: 'Failed to parse iOS process list',
@@ -145,8 +151,9 @@ export async function terminateIosDeviceApp(device: DeviceInfo, bundleId: string
 export async function resolveIosDeviceAppProcesses(
   device: DeviceInfo,
   bundleId: string,
+  signal?: AbortSignal,
 ): Promise<IosDeviceAppProcesses> {
-  const app = (await listIosDeviceApps(device, 'all')).find(
+  const app = (await listIosDeviceApps(device, 'all', signal)).find(
     (candidate) => candidate.bundleId === bundleId,
   );
   if (!app) {
@@ -165,7 +172,7 @@ export async function resolveIosDeviceAppProcesses(
 
   const appBundleUrl = app.url.replace(/\/+$/, '');
   // CoreDevice reports app URLs and process executables in the same file-URL form.
-  const processes = (await listIosDeviceProcesses(device)).filter((processInfo) =>
+  const processes = (await listIosDeviceProcesses(device, signal)).filter((processInfo) =>
     processInfo.executable.startsWith(`${appBundleUrl}/`),
   );
   return { appBundleUrl, processes };

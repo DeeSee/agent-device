@@ -1,3 +1,8 @@
+import type { AppProcessesRuntimeOperations } from '@agent-device/contracts/app-processes-runtime';
+import {
+  appleAppProcessesFact,
+  createAppleAppProcessesOperations,
+} from './app-processes-runtime.ts';
 import {
   type DeviceBinding,
   type RuntimeOperationFact,
@@ -300,6 +305,7 @@ export function createApplePlatformRuntime(host: PlatformRuntimeHost): PlatformR
         ...logs.operations,
         ...deployment,
         appState: appleAppStateFact(device),
+        observeAppProcesses: appleAppProcessesFact(device),
         networkDump: available,
         screenRecordingStart: recordingFacts,
         screenRecordingReattach: recordingFacts,
@@ -358,8 +364,17 @@ export function createApplePlatformRuntime(host: PlatformRuntimeHost): PlatformR
             resolveInteractor: host.localInteractors.resolve,
           }),
       );
+      const appProcessesOperations: Partial<AppProcessesRuntimeOperations> = whenAdmitted(
+        facts.operations.observeAppProcesses,
+        () =>
+          createAppleAppProcessesOperations({
+            device: request.device,
+            signal: request.scope.signal,
+          }),
+      );
       const operations: DeviceBinding<PlatformRuntimeOperations>['operations'] = {
         ...appStateOperations,
+        ...appProcessesOperations,
         ...logs.operations,
         ...createAppleAppDeploymentOperations({
           host,
