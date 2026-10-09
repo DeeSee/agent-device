@@ -29,6 +29,7 @@ export function androidAppDeploymentFacts(device: DeviceInfo): Readonly<{
   deployMaterializedApp: RuntimeOperationFact;
   sendPushNotification: RuntimeOperationFact;
   writeAppContainerJson: RuntimeOperationFact;
+  readAppContainerJson: RuntimeOperationFact;
 }> {
   const fact = androidDeployFact(device);
   return Object.freeze({
@@ -40,6 +41,11 @@ export function androidAppDeploymentFacts(device: DeviceInfo): Readonly<{
       available: false,
       reason: 'unsupported-platform-leaf',
       hint: 'Verified app container JSON writes are currently supported only on Apple targets.',
+    }),
+    readAppContainerJson: Object.freeze({
+      available: false,
+      reason: 'unsupported-platform-leaf',
+      hint: 'App container JSON reads are currently supported only on Apple targets.',
     }),
   });
 }

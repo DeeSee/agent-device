@@ -1180,6 +1180,7 @@ function createStubClient(params: {
       artifacts: unexpectedCommandCall,
     },
     apps: {
+      processes: unexpectedCommandCall,
       install: async () => ({
         app: 'Demo',
         appPath: '/tmp/Demo.app',
@@ -1206,7 +1207,7 @@ function createStubClient(params: {
       }),
       push: unexpectedCommandCall,
       triggerEvent: unexpectedCommandCall,
-      files: { writeJson: unexpectedCommandCall },
+      files: { writeJson: unexpectedCommandCall, readJson: unexpectedCommandCall },
     },
     materializations: {
       release: async (options) => ({

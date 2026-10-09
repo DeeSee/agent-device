@@ -8,7 +8,11 @@ import {
   handleSessionInventoryCommands,
   handleSessionOpenCommands,
 } from '../session-lifecycle/index.ts';
-import { handleAppContainerJsonWriteCommand } from './session-app-container-files.ts';
+import {
+  handleAppContainerJsonReadCommand,
+  handleAppContainerJsonWriteCommand,
+} from './session-app-container-files.ts';
+import { handleAppProcessesCommand } from './session-app-processes.ts';
 import type { DaemonResponse } from '../daemon-request.ts';
 import { handleReleaseMaterializedPathsCommand } from './session-app-source-deployment.ts';
 import { handleRuntimeCommand } from './session-runtime-command.ts';
@@ -113,6 +117,18 @@ const handleSessionObservabilityCommandGroup: SessionCommandHandler = async ({
  * clusters) map several keys to the SAME handler reference below.
  */
 const SESSION_COMMAND_HANDLER_IMPLS = {
+  app_processes: handleAppProcessesCommand,
+  app_container_read_json: async ({ req, sessionName, sessionStore, inspectFacts, bindDevice }) =>
+    await handleAppContainerJsonReadCommand({
+      req,
+      resolveDevice: async () => {
+        const session = sessionStore.get(sessionName);
+        const missing = requireSessionOrExplicitSelector(req.command, session, req.flags);
+        return missing ?? (await resolveCommandDevice({ session, flags: req.flags }));
+      },
+      inspectFacts,
+      bindDevice,
+    }),
   app_container_write_json: async ({ req, sessionName, sessionStore, inspectFacts, bindDevice }) =>
     await handleAppContainerJsonWriteCommand({
       req,

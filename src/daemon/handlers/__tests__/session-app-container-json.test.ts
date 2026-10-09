@@ -5,7 +5,10 @@ import type {
 } from '../../request-runtime-binding.ts';
 import type { DaemonRequest } from '../../daemon-request.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import { handleAppContainerJsonWriteCommand } from '../session-app-container-files.ts';
+import {
+  handleAppContainerJsonReadCommand,
+  handleAppContainerJsonWriteCommand,
+} from '../session-app-container-files.ts';
 import { mockInspectDeviceRuntimeFacts } from './session-command-harness.ts';
 
 const DEVICE: DeviceInfo = {
@@ -29,6 +32,57 @@ function request(input: unknown): DaemonRequest {
     input: input as Record<string, unknown>,
   };
 }
+
+test('JSON read refuses semantic traversal before device selection or runtime binding', async () => {
+  const resolveDevice = vi.fn(async () => DEVICE);
+  const bindDevice = vi.fn() as unknown as BindDeviceRuntime;
+  const req = {
+    ...request({ app: 'ru.yandex.mobile.search', containerPath: '../config.json' }),
+    command: 'app_container_read_json',
+  };
+  expect(await handleAppContainerJsonReadCommand({ req, resolveDevice, bindDevice })).toMatchObject(
+    {
+      ok: false,
+      error: { code: 'INVALID_ARGS' },
+    },
+  );
+  expect(resolveDevice).not.toHaveBeenCalled();
+  expect(bindDevice).not.toHaveBeenCalled();
+});
+
+test('JSON read admits one request-scoped operation and preserves its receipt', async () => {
+  const receipt = {
+    appId: 'ru.yandex.mobile.search',
+    containerPath: 'Documents/config.json',
+    sha256: 'a'.repeat(64),
+    byteLength: 17,
+    value: { enabled: true },
+  };
+  const read = vi.fn(async () => receipt);
+  const bindDevice = vi.fn(async () => ({
+    operations: { readAppContainerJson: read },
+  })) as unknown as BindDeviceRuntime;
+  const req = {
+    ...request({ app: receipt.appId, containerPath: receipt.containerPath }),
+    command: 'app_container_read_json',
+  };
+  const inspectFacts: InspectDeviceRuntimeFacts = async (device) => {
+    const facts = await mockInspectDeviceRuntimeFacts(device);
+    return {
+      ...facts,
+      operations: { ...facts.operations, readAppContainerJson: { available: true } },
+    };
+  };
+  const result = await handleAppContainerJsonReadCommand({
+    req,
+    resolveDevice: async () => DEVICE,
+    inspectFacts,
+    bindDevice,
+  });
+  expect(result).toEqual({ ok: true, data: receipt });
+  expect(bindDevice).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledWith({ app: receipt.appId, containerPath: receipt.containerPath });
+});
 
 test.each([
   {

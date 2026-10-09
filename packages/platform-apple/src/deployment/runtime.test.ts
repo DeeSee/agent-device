@@ -69,8 +69,11 @@ function bootedSimulatorListResult(
 }
 
 function deploymentHost(
-  appleDeployment: Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'> &
-    Partial<Pick<AppleAppDeploymentExecutor, 'writeAppContainerJson'>>,
+  appleDeployment: Omit<
+    AppleAppDeploymentExecutor,
+    'writeAppContainerJson' | 'readAppContainerJson'
+  > &
+    Partial<Pick<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>>,
   run = xcrunLikeRun((request) => ({
     stdout: request.args.includes('list')
       ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
@@ -81,6 +84,9 @@ function deploymentHost(
 ): PlatformRuntimeHost {
   return {
     appleDeployment: {
+      readAppContainerJson: vi.fn(async () => {
+        throw new Error('unexpected app-container read');
+      }),
       writeAppContainerJson: vi.fn(async () => {
         throw new Error('unexpected app-container write');
       }),
@@ -254,7 +260,7 @@ test('exposes only fact-admitted Apple deployment operations', async () => {
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = vi.fn(async (request: { args: readonly string[] }) => ({
     stdout: request.args.includes('list')
       ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
@@ -323,7 +329,7 @@ test('physical iOS install failure surfaces the devicectl Developer Mode hint', 
     prepareArtifact,
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('install')
       ? {
@@ -368,7 +374,7 @@ test('simulator install failure surfaces the simctl stderr excerpt with no devic
     prepareArtifact,
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('install')
       ? {
@@ -408,7 +414,7 @@ test('simulator push failure surfaces the simctl stderr excerpt', async () => {
     prepareArtifact: vi.fn(),
     resolveAppBundleId: vi.fn(),
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('push')
       ? {
@@ -444,7 +450,7 @@ test('physical iOS uninstall failure surfaces the devicectl Developer Mode hint'
     prepareArtifact: vi.fn(),
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = xcrunLikeRun((request) =>
     request.args.includes('uninstall')
       ? {
@@ -499,7 +505,7 @@ test.each([
       prepareArtifact,
       resolveAppBundleId,
       withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-    } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+    } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
     const run = xcrunLikeRun((request) => {
       if (request.args.includes('uninstall')) {
         return { stdout: '', stderr: 'ERROR: App Not Installed', exitCode: 1 };
@@ -540,7 +546,7 @@ test('preserves Apple reinstall partial-failure ordering', async () => {
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const host = deploymentHost(executor);
   const operations = createAppleAppDeploymentOperations({
     host,
@@ -605,7 +611,7 @@ test('clears a concurrently repopulated fuzzy resolution after a partial-failed 
     prepareArtifact,
     resolveAppBundleId,
     withInvalidatedAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const operations = createAppleAppDeploymentOperations({
     host: deploymentHost(executor),
     device: appleDevice(),
@@ -639,7 +645,7 @@ test('writes bounded app-container JSON after readiness and returns the executor
     resolveAppBundleId,
     writeAppContainerJson,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = vi.fn(async (request: { args: readonly string[] }) => ({
     stdout: request.args.includes('list')
       ? '{"devices":{"runtime":[{"udid":"apple-deployment-fact","state":"Booted"}]}}'
@@ -688,7 +694,7 @@ test('refuses oversized app-container JSON before readiness or device effects', 
     resolveAppBundleId,
     writeAppContainerJson,
     withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>;
+  } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>;
   const run = vi.fn();
   const operations = createAppleAppDeploymentOperations({
     host: deploymentHost(executor, run),
@@ -740,7 +746,7 @@ test('derives Apple reinstall identity from the prepared artifact when app is om
         resolveAppBundleId,
         writeAppContainerJson: vi.fn(async () => ({ sha256: '0'.repeat(64), byteLength: 3 })),
         withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>,
+      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>,
       run,
     ),
     device: appleDevice(),
@@ -776,7 +782,7 @@ test('refuses identity-less Apple replacement artifacts before device effects', 
         resolveAppBundleId: vi.fn(),
         writeAppContainerJson: vi.fn(async () => ({ sha256: '0'.repeat(64), byteLength: 3 })),
         withInvalidatedAppResolutionCache: withoutInvalidatingAppResolutionCache,
-      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson'>,
+      } as Omit<AppleAppDeploymentExecutor, 'writeAppContainerJson' | 'readAppContainerJson'>,
       run,
     ),
     device: appleDevice(),

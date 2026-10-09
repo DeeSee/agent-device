@@ -420,6 +420,8 @@ function sourceRuntimeFacts(
     },
     operations: {
       writeAppContainerJson: unavailable,
+      readAppContainerJson: unavailable,
+      observeAppProcesses: unavailable,
       ...unavailableApplicationLifecycleOperationFacts,
       appLogInspect: unavailable,
       appLogDoctor: unavailable,

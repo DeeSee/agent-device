@@ -5,7 +5,11 @@ import type { LaunchConfirmation } from './application-lifecycle-runtime.ts';
 import type { JsonObject } from './json.ts';
 import type { SessionSurface } from './session-surface.ts';
 import type { TargetShutdownResult } from './target-shutdown-contract.ts';
-import type { DaemonInstallSource, SessionRuntimeHints } from '@agent-device/kernel/contracts';
+import type {
+  DaemonInstallSource,
+  ResponseCost,
+  SessionRuntimeHints,
+} from '@agent-device/kernel/contracts';
 import type { DaemonError } from '@agent-device/kernel/errors';
 import type { PublicPlatform } from '@agent-device/kernel/device';
 import type {
@@ -180,6 +184,34 @@ export type AppListOptions = AgentDeviceRequestOverrides &
   AgentDeviceSelectionOptions & {
     appsFilter?: AppsFilter;
   };
+
+export type AppProcessesOptions = Omit<AgentDeviceRequestOverrides, 'session'> & {
+  session: string;
+};
+
+export type AppProcessesResult = Readonly<{
+  platform: 'ios';
+  appBundleId: string;
+  processIds: readonly number[];
+  device: AgentDeviceSessionDevice & Readonly<{ kind: 'device' | 'simulator' }>;
+  identifiers: AgentDeviceIdentifiers;
+}>;
+
+/** Read a JSON object from an exact app data path, bounded to 256 KiB and 128 nesting levels. */
+export type AppContainerReadJsonOptions = AgentDeviceRequestOverrides &
+  AgentDeviceSelectionOptions & {
+    app: string;
+    containerPath: string;
+  };
+
+export type AppContainerReadJsonResult = {
+  appId: string;
+  containerPath: string;
+  sha256: string;
+  byteLength: number;
+  value: JsonObject;
+  cost?: ResponseCost;
+};
 
 export type AppContainerWriteJsonOptions = AgentDeviceRequestOverrides &
   AgentDeviceSelectionOptions & {

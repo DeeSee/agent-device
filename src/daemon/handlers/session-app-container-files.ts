@@ -1,6 +1,9 @@
 import { checkAppContainerJsonPath } from '@agent-device/contracts/app-deployment-runtime';
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import { writeAppContainerJsonUse } from '@agent-device/contracts/app-deployment-runtime-plan';
+import {
+  readAppContainerJsonUse,
+  writeAppContainerJsonUse,
+} from '@agent-device/contracts/app-deployment-runtime-plan';
 import type { AppContainerWriteJsonInput } from '@agent-device/contracts/app-deployment-runtime';
 import type { JsonObject, JsonValue } from '@agent-device/contracts/client';
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
@@ -34,6 +37,46 @@ export async function handleAppContainerJsonWriteCommand(params: {
       writeAppContainerJsonUse,
     );
     return { ok: true, data: await runtime.operations.writeAppContainerJson(input) };
+  } catch (error) {
+    return { ok: false, error: normalizeError(error) };
+  }
+}
+
+export async function handleAppContainerJsonReadCommand(params: {
+  req: DaemonRequest;
+  resolveDevice: () => Promise<DeviceInfo | DaemonResponse>;
+  inspectFacts?: InspectDeviceRuntimeFacts;
+  bindDevice?: BindDeviceRuntime;
+}): Promise<DaemonResponse> {
+  try {
+    const input = params.req.input;
+    if (
+      !isRecord(input) ||
+      !hasExactKeys(input, ['app', 'containerPath']) ||
+      params.req.positionals.length !== 0
+    ) {
+      throw new AppError(
+        'INVALID_ARGS',
+        'App container JSON read requires exactly app and containerPath',
+      );
+    }
+    const app = requireText(input.app, 'app');
+    if (app.trim() !== app) throw new AppError('INVALID_ARGS', 'app must be an exact bundle ID');
+    const checkedPath = checkAppContainerJsonPath(input.containerPath);
+    if (!checkedPath.valid) throw new AppError('INVALID_ARGS', checkedPath.message);
+    const device = await params.resolveDevice();
+    if ('ok' in device) return device;
+    const facts = await requireRuntimeFacts(params.inspectFacts)(device);
+    const unsupported = unavailableRuntimeOperationResponse(
+      params.req.command,
+      facts.operations.readAppContainerJson,
+    );
+    if (unsupported) return unsupported;
+    const runtime = await requireRuntimeBinding(params.bindDevice)(device, readAppContainerJsonUse);
+    return {
+      ok: true,
+      data: await runtime.operations.readAppContainerJson({ app, containerPath: checkedPath.path }),
+    };
   } catch (error) {
     return { ok: false, error: normalizeError(error) };
   }

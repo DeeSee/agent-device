@@ -209,6 +209,8 @@ export function createUnavailablePlatformRuntimeFacts(
       deployMaterializedApp: frozen.appDeployment,
       sendPushNotification: frozen.appDeployment,
       writeAppContainerJson: frozen.appDeployment,
+      readAppContainerJson: frozen.appDeployment,
+      observeAppProcesses: frozen.appState,
       appState: frozen.appState,
       networkDump: frozen.network,
       screenRecordingStart: frozen.screenRecording,

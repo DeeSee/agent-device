@@ -8,6 +8,7 @@ import {
   type AppleAppContainerJsonDependencies,
   writeTextAtomicUnderRoot,
   writeVerifiedAppleAppContainerJson,
+  readAppleAppContainerJson,
 } from '../app-container-json.ts';
 
 const VALUE = '{"enabled":true}\n';
@@ -45,6 +46,94 @@ function dependencies(runXcrun: AppleAppContainerJsonDependencies['runXcrun']) {
   };
   return { value, files };
 }
+
+test('physical JSON read copies only from the exact app container and hashes its original bytes', async () => {
+  const fixture = dependencies(
+    vi.fn(async (args) => {
+      const destination = args[args.indexOf('--destination') + 1]!;
+      fixture.files.set(destination, VALUE);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }),
+  );
+  const result = await readAppleAppContainerJson(
+    appleDevice('device'),
+    {
+      appId: 'ru.yandex.mobile.search',
+      containerPath: 'Documents/local_config.json',
+    },
+    new AbortController().signal,
+    fixture.value,
+  );
+  expect(result).toEqual({
+    sha256: createHash('sha256').update(VALUE).digest('hex'),
+    byteLength: Buffer.byteLength(VALUE),
+    value: { enabled: true },
+  });
+  expect(fixture.value.runXcrun).toHaveBeenCalledTimes(1);
+  expect((fixture.value.runXcrun as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual([
+    'devicectl',
+    'device',
+    'copy',
+    'from',
+    '--device',
+    'physical-1',
+    '--source',
+    'Documents/local_config.json',
+    '--destination',
+    '/private/tmp/app-config-0.json',
+    '--domain-type',
+    'appDataContainer',
+    '--domain-identifier',
+    'ru.yandex.mobile.search',
+  ]);
+});
+
+test('simulator JSON read rejects symlink escape without reading the target', async () => {
+  const root = await mkdtempForTest('agent-device-json-read-');
+  const outside = await mkdtempForTest('agent-device-json-outside-');
+  await fs.writeFile(path.join(outside, 'config.json'), VALUE);
+  await fs.symlink(outside, path.join(root, 'Documents'));
+  const fixture = dependencies(vi.fn(async () => ({ stdout: root, stderr: '', exitCode: 0 })));
+  const readText = vi.fn(async () => VALUE);
+  await expect(
+    readAppleAppContainerJson(
+      appleDevice('simulator'),
+      {
+        appId: 'ru.yandex.mobile.search',
+        containerPath: 'Documents/config.json',
+      },
+      new AbortController().signal,
+      { ...fixture.value, readText },
+    ),
+  ).rejects.toMatchObject({ code: 'COMMAND_FAILED' });
+  expect(readText).not.toHaveBeenCalled();
+});
+
+test('JSON reads refuse nonobject and oversized app files', async () => {
+  let contents = '[]';
+  const fixture = dependencies(
+    vi.fn(async (args) => {
+      fixture.files.set(args[args.indexOf('--destination') + 1]!, contents);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }),
+  );
+  const read = () =>
+    readAppleAppContainerJson(
+      appleDevice('device'),
+      {
+        appId: 'ru.yandex.mobile.search',
+        containerPath: 'Documents/config.json',
+      },
+      new AbortController().signal,
+      fixture.value,
+    );
+  await expect(read()).rejects.toMatchObject({ code: 'COMMAND_FAILED' });
+  contents = JSON.stringify({ value: 'x'.repeat(256 * 1024) });
+  await expect(read()).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
+    details: { reason: 'app_container_json_too_large' },
+  });
+});
 
 test('physical write publishes and verifies through exact devicectl appDataContainer copies', async () => {
   let remote = '';

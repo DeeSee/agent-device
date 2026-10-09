@@ -329,6 +329,8 @@ const REPLAY_SCRIPT_LINE_PLANS = {
   release_materialized_paths: GENERIC_REPLAY_LINE,
   session_list: GENERIC_REPLAY_LINE,
   app_container_write_json: GENERIC_REPLAY_LINE,
+  app_container_read_json: GENERIC_REPLAY_LINE,
+  app_processes: GENERIC_REPLAY_LINE,
   session_reserve: GENERIC_REPLAY_LINE,
   session_save_script: GENERIC_REPLAY_LINE,
 } satisfies Record<ReplayCommandName, ReplayLinePlan>;

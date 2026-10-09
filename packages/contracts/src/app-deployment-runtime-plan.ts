@@ -3,6 +3,7 @@ import { defineUse } from './platform-runtime-operations.ts';
 export const deployAppUse = defineUse({ required: ['deployApp'] });
 
 export const writeAppContainerJsonUse = defineUse({ required: ['writeAppContainerJson'] });
+export const readAppContainerJsonUse = defineUse({ required: ['readAppContainerJson'] });
 
 /**
  * Source installs retain their readiness precondition in the same request binding as

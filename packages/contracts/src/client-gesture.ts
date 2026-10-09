@@ -134,6 +134,8 @@ export type FillOptions = DeviceCommandBaseOptions &
     delayMs?: number;
     /** Publish this fill value as `${VAR}` when script recording is armed. */
     recordAs?: string;
+    /** Do not retain this fill in session action history or a recorded script. */
+    noRecord?: boolean;
     verify?: boolean;
   };
 

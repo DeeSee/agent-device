@@ -12,6 +12,7 @@
   "@agent-device/contracts/app-event-runtime",
   "@agent-device/contracts/app-inventory-runtime",
   "@agent-device/contracts/app-log-runtime",
+  "@agent-device/contracts/app-processes-runtime",
   "@agent-device/contracts/app-state-runtime",
   "@agent-device/contracts/apple-runner-request",
   "@agent-device/contracts/apple-session-observation",

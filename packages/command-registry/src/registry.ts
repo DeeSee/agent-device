@@ -28,7 +28,9 @@ import {
   readyMaterializeAndDeployAppUse,
   readySendPushNotificationUse,
   writeAppContainerJsonUse,
+  readAppContainerJsonUse,
 } from '@agent-device/contracts/app-deployment-runtime-plan';
+import { appProcessesUse } from '@agent-device/contracts/app-processes-runtime';
 import {
   closeApplicationRuntimePlanUses,
   openApplicationRuntimePlanUses,
@@ -592,6 +594,32 @@ export const RAW_COMMAND_DESCRIPTORS = [
   },
 
   // -- session (route: session) --
+  {
+    name: 'app_processes',
+    deviceClaimPolicy: 'require-owner',
+    ...(ownerFilesEnabled
+      ? { ownerFiles: ['src/daemon/handlers/session-app-processes.ts'] as const }
+      : {}),
+    catalog: { group: 'internal', key: 'appProcesses' },
+    recordsSessionAction: false,
+    daemon: { route: 'session', sessionKind: 'observability', refFrameEffect: 'preserve' },
+    timeoutPolicy: DEFAULT_TIMEOUT_POLICY,
+    batchable: false,
+    platformExecution: { kind: 'device-runtime', use: appProcessesUse },
+  },
+  {
+    name: 'app_container_read_json',
+    deviceClaimPolicy: 'observe',
+    ...(ownerFilesEnabled
+      ? { ownerFiles: ['src/daemon/handlers/session-app-container-files.ts'] as const }
+      : {}),
+    catalog: { group: 'internal', key: 'appContainerReadJson' },
+    recordsSessionAction: false,
+    daemon: { route: 'session', refFrameEffect: 'preserve' },
+    timeoutPolicy: DEFAULT_TIMEOUT_POLICY,
+    batchable: false,
+    platformExecution: { kind: 'device-runtime', use: readAppContainerJsonUse },
+  },
   {
     name: 'app_container_write_json',
     deviceClaimPolicy: 'transient-exclusive',

@@ -1,6 +1,8 @@
 export type {
   AppContainerWriteJsonOptions,
   AppContainerWriteJsonResult,
+  AppContainerReadJsonOptions,
+  AppContainerReadJsonResult,
   AppCloseOptions,
   AppCloseResult,
   AppDeployOptions,
@@ -9,6 +11,8 @@ export type {
   AppInstallFromSourceResult,
   AppInstallOptions,
   AppListOptions,
+  AppProcessesOptions,
+  AppProcessesResult,
   AppOpenOptions,
   AppOpenResult,
   AppPushOptions,

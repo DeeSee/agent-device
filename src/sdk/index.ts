@@ -6,6 +6,10 @@ export {
   normalizeAgentDeviceError,
 } from '@agent-device/kernel/errors';
 export { centerOfRect } from '@agent-device/kernel/snapshot';
+export {
+  interactionTargetFingerprint,
+  type InteractionTargetFingerprintInput,
+} from '../interaction-target-fingerprint.ts';
 
 // The types the root's two functions are written in. `createAgentDeviceClient` returns
 // `AgentDeviceClient`, whose every option and result type is a named type of

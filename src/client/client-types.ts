@@ -30,21 +30,12 @@ export type {
 } from '@agent-device/contracts/remote';
 
 // Contracts/kernel types re-exported into the PUBLISHED surface: `agent-device-client.ts` picks
-// these up via `export type *`, and that is their only job — every internal consumer imports
-// them from the declaring module instead. Fallow therefore sees no consumer, which is exactly
-// right and exactly not actionable: deleting them would remove names from the package's public
-// types. Suppressed per name rather than baselined so the reason travels with the code.
-// fallow-ignore-next-line unused-type
+// these up via `export type *`; internal consumers import their declaring modules directly.
 export type { TargetShutdownResult } from '@agent-device/contracts/device';
-// fallow-ignore-next-line unused-type
 export type { MetroBridgeScope } from '@agent-device/contracts/remote';
-// fallow-ignore-next-line unused-type
 export type { AppsFilter } from '@agent-device/contracts/device';
-// fallow-ignore-next-line unused-type
 export type { AlertAction } from '@agent-device/contracts/alert-contract';
-// fallow-ignore-next-line unused-type
 export type { AppleOS } from '@agent-device/kernel/device';
-// fallow-ignore-next-line unused-type
 export type { JsonObject } from '@agent-device/contracts/client';
 export type { BatchRunResult } from '@agent-device/command-registry/batch';
 
@@ -65,6 +56,8 @@ import type {
   AppInstallFromSourceResult,
   AppInstallOptions,
   AppListOptions,
+  AppProcessesOptions,
+  AppProcessesResult,
   AppOpenOptions,
   AppOpenResult,
   AppPushOptions,
@@ -75,6 +68,8 @@ import type {
   AppTriggerEventOptions,
   AppContainerWriteJsonOptions,
   AppContainerWriteJsonResult,
+  AppContainerReadJsonOptions,
+  AppContainerReadJsonResult,
   AudioOptions,
   BackCommandOptions,
   BatchRunOptions,
@@ -226,6 +221,7 @@ export type AgentDeviceClient = {
     artifacts: (options?: CloudArtifactsOptions) => Promise<AgentArtifactsResult>;
   };
   apps: {
+    processes: (options: AppProcessesOptions) => Promise<AppProcessesResult>;
     install: (options: AppInstallOptions) => Promise<AppDeployResult>;
     reinstall: (options: AppDeployOptions) => Promise<AppDeployResult>;
     installFromSource: (
@@ -237,6 +233,7 @@ export type AgentDeviceClient = {
     push: (options: AppPushOptions) => Promise<CommandResult<'push'>>;
     triggerEvent: (options: AppTriggerEventOptions) => Promise<CommandResult<'trigger-app-event'>>;
     files: {
+      readJson: (options: AppContainerReadJsonOptions) => Promise<AppContainerReadJsonResult>;
       writeJson: (options: AppContainerWriteJsonOptions) => Promise<AppContainerWriteJsonResult>;
     };
   };

@@ -13,6 +13,7 @@ import type {
   AppListOptions,
   AppOpenOptions,
   AppContainerWriteJsonOptions,
+  AppContainerReadJsonOptions,
   CaptureScreenshotArtifactOptions,
   CaptureScreenshotArtifactResult,
   CaptureScreenshotOptions,
@@ -85,6 +86,11 @@ import { isRecord, readSnapshotKeyboardBandFact } from '@agent-device/kernel/rec
 import { readResponseWarnings } from '@agent-device/kernel/success-text';
 import { createLeaseClient } from './client/lease-client.ts';
 import { normalizeScreenshotCaptureResult } from './client/screenshot-result.ts';
+import {
+  validateAppContainerReadOptions,
+  normalizeAppContainerReadResult,
+} from './client/app-container-read-json.ts';
+import { requireAppProcessesSession, normalizeAppProcessesResult } from './client/app-processes.ts';
 
 export function createAgentDeviceClient(
   config: AgentDeviceClientConfig = {},
@@ -289,6 +295,13 @@ export function createAgentDeviceClient(
         await executeCommand<AgentArtifactsResult>('artifacts', options),
     },
     apps: {
+      processes: async (options) => {
+        const session = requireAppProcessesSession(options.session);
+        return normalizeAppProcessesResult(
+          await execute(INTERNAL_COMMANDS.appProcesses, [], options),
+          session,
+        );
+      },
       install: async (options: AppInstallOptions) =>
         normalizeDeployResult(
           await executeCommand('install', options),
@@ -367,6 +380,20 @@ export function createAgentDeviceClient(
       triggerEvent: async (options) =>
         await executeCommand<CommandResult<'trigger-app-event'>>('trigger-app-event', options),
       files: {
+        readJson: async (options: AppContainerReadJsonOptions) => {
+          validateAppContainerReadOptions(options);
+          const data = await execute(
+            INTERNAL_COMMANDS.appContainerReadJson,
+            [],
+            options,
+            undefined,
+            {
+              app: options.app,
+              containerPath: options.containerPath,
+            },
+          );
+          return normalizeAppContainerReadResult(data, options);
+        },
         writeJson: async (options: AppContainerWriteJsonOptions) => {
           const data = await execute(
             INTERNAL_COMMANDS.appContainerWriteJson,

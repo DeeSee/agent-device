@@ -49,6 +49,8 @@ const APPLE_SIMULATOR_OPERATION_HOSTS: Readonly<
   readClipboard: 'simulator',
   // The runner writes the pasteboard: `simctl pbcopy` leaves it empty under Xcode 27.
   writeAppContainerJson: 'simulator',
+  readAppContainerJson: 'simulator',
+  observeAppProcesses: 'simulator',
   writeClipboard: 'runner',
   setSetting: 'simulator',
   readSetting: 'simulator',

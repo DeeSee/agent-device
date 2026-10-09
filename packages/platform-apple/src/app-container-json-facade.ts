@@ -11,3 +11,12 @@ export async function writeVerifiedAppleAppContainerJson(
     await import('./core/app-container-json.ts');
   return await write(...args);
 }
+
+export async function readAppleAppContainerJson(
+  ...args: Parameters<typeof import('./core/app-container-json.ts').readAppleAppContainerJson>
+): Promise<
+  Awaited<ReturnType<typeof import('./core/app-container-json.ts').readAppleAppContainerJson>>
+> {
+  const { readAppleAppContainerJson: read } = await import('./core/app-container-json.ts');
+  return await read(...args);
+}

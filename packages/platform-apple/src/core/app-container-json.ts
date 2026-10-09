@@ -1,4 +1,9 @@
-import { checkAppContainerJsonPath } from '@agent-device/contracts/app-deployment-runtime';
+import {
+  APP_CONTAINER_JSON_MAX_BYTES,
+  checkAppContainerJsonPath,
+  isBoundedAppContainerJsonObject,
+  type AppContainerReadJsonResult,
+} from '@agent-device/contracts/app-deployment-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   createHostDirectory,
@@ -59,7 +64,15 @@ const defaultDependencies: AppleAppContainerJsonDependencies = Object.freeze({
     }
   },
   writeTextAtomicUnderRoot,
-  readText: async (pathname) => await readHostTextFile(pathname),
+  readText: async (pathname) => {
+    const status = await hostFileLstat(pathname);
+    if (status.size > APP_CONTAINER_JSON_MAX_BYTES) {
+      throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 256 KiB limit', {
+        reason: 'app_container_json_too_large',
+      });
+    }
+    return await readHostTextFile(pathname);
+  },
 });
 
 export async function writeTextAtomicUnderRoot(
@@ -129,6 +142,81 @@ export async function writeVerifiedAppleAppContainerJson(
   return expected;
 }
 
+export async function readAppleAppContainerJson(
+  device: DeviceInfo,
+  input: Readonly<{ appId: string; containerPath: string }>,
+  signal: AbortSignal,
+  dependencies: AppleAppContainerJsonDependencies = defaultDependencies,
+): Promise<Omit<AppContainerReadJsonResult, 'appId' | 'containerPath'>> {
+  signal.throwIfAborted();
+  requireSupportedDevice(device);
+  const appId = requireText(input.appId, 'appId');
+  const containerPath = requireContainerPath(input.containerPath);
+  const contents =
+    device.kind === 'device'
+      ? await dependencies.withTemporaryText('', async (destinationPath) => {
+          await runDeviceCopy(
+            device,
+            'from',
+            containerPath,
+            destinationPath,
+            appId,
+            signal,
+            dependencies,
+          );
+          return await dependencies.readText(destinationPath);
+        })
+      : await readSimulatorContainerJson(device, appId, containerPath, signal, dependencies);
+  signal.throwIfAborted();
+  const receipt = digest(contents);
+  if (receipt.byteLength > APP_CONTAINER_JSON_MAX_BYTES) {
+    throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 256 KiB limit', {
+      reason: 'app_container_json_too_large',
+    });
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(contents);
+  } catch {
+    throw new AppError('COMMAND_FAILED', 'App container file is not valid JSON');
+  }
+  if (!isBoundedAppContainerJsonObject(value)) {
+    throw new AppError(
+      'COMMAND_FAILED',
+      'App container JSON must be an object with at most 128 nesting levels',
+    );
+  }
+  return { ...receipt, value };
+}
+
+async function readSimulatorContainerJson(
+  device: DeviceInfo,
+  appId: string,
+  containerPath: string,
+  signal: AbortSignal,
+  dependencies: AppleAppContainerJsonDependencies,
+): Promise<string> {
+  const root = await resolveSimulatorDataContainer(device, appId, signal, dependencies);
+  const resolvedRoot = await resolveHostPath(root);
+  const components = containerPath.split('/');
+  const filename = components.pop()!;
+  const parent = await resolveRealDirectoryUnderRoot(resolvedRoot, components, false);
+  const pathname = path.join(parent, filename);
+  const status = await hostFileLstat(pathname);
+  if (
+    !status.isFile() ||
+    status.isSymbolicLink() ||
+    (await resolveHostPath(pathname)) !== pathname
+  ) {
+    throw new AppError(
+      'COMMAND_FAILED',
+      'App container JSON must be a regular file inside its data container',
+    );
+  }
+  signal.throwIfAborted();
+  return await dependencies.readText(pathname);
+}
+
 async function writeAndReadPhysical(
   device: DeviceInfo,
   appId: string,
@@ -194,6 +282,23 @@ async function writeAndReadSimulator(
   signal: AbortSignal,
   dependencies: AppleAppContainerJsonDependencies,
 ): Promise<string> {
+  const containerRoot = await resolveSimulatorDataContainer(device, appId, signal, dependencies);
+  const pathname = await dependencies.writeTextAtomicUnderRoot(
+    containerRoot,
+    containerPath,
+    value,
+    signal,
+  );
+  signal.throwIfAborted();
+  return await dependencies.readText(pathname);
+}
+
+async function resolveSimulatorDataContainer(
+  device: DeviceInfo,
+  appId: string,
+  signal: AbortSignal,
+  dependencies: AppleAppContainerJsonDependencies,
+): Promise<string> {
   const result = await dependencies.runXcrun(
     buildSimctlArgsForDevice(device, ['get_app_container', device.id, appId, 'data']),
     { allowFailure: true, signal, timeoutMs: COPY_TIMEOUT_MS },
@@ -204,14 +309,7 @@ async function writeAndReadSimulator(
   if (!path.isAbsolute(containerRoot)) {
     throw new AppError('COMMAND_FAILED', 'simctl returned an invalid app data container path');
   }
-  const pathname = await dependencies.writeTextAtomicUnderRoot(
-    path.resolve(containerRoot),
-    containerPath,
-    value,
-    signal,
-  );
-  signal.throwIfAborted();
-  return await dependencies.readText(pathname);
+  return path.resolve(containerRoot);
 }
 
 async function resolveRealDirectoryUnderRoot(

@@ -28,5 +28,10 @@ export function createAppleAppDeploymentExecutor(): AppleAppDeploymentExecutor {
         await import('@agent-device/platform-apple/app-container-json');
       return await writeVerifiedAppleAppContainerJson(device, input, signal);
     },
+    readAppContainerJson: async (device, input, signal) => {
+      const { readAppleAppContainerJson } =
+        await import('@agent-device/platform-apple/app-container-json');
+      return await readAppleAppContainerJson(device, input, signal);
+    },
   });
 }

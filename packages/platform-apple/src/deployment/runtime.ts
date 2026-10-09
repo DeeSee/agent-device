@@ -1,5 +1,6 @@
 import type {
   AppContainerWriteJsonInput,
+  AppContainerReadJsonInput,
   AppContainerWriteJsonResult,
   AppDeploymentInput,
   AppDeploymentResult,
@@ -50,6 +51,7 @@ export function appleAppDeploymentFacts(device: DeviceInfo): Readonly<{
   deployMaterializedApp: RuntimeOperationFact;
   sendPushNotification: RuntimeOperationFact;
   writeAppContainerJson: RuntimeOperationFact;
+  readAppContainerJson: RuntimeOperationFact;
 }> {
   const deploy = appleDeployFact(device);
   return Object.freeze({
@@ -58,6 +60,7 @@ export function appleAppDeploymentFacts(device: DeviceInfo): Readonly<{
     deployMaterializedApp: deploy,
     sendPushNotification: applePushFact(device),
     writeAppContainerJson: appleContainerJsonFact(device),
+    readAppContainerJson: appleContainerJsonFact(device),
   });
 }
 
@@ -91,6 +94,19 @@ export function createAppleAppDeploymentOperations(params: {
       ? {
           writeAppContainerJson: async (input: AppContainerWriteJsonInput) =>
             await writeAppleAppContainerJson(host, device, input, signal),
+        }
+      : {}),
+    ...(facts.readAppContainerJson.available
+      ? {
+          readAppContainerJson: async (input: AppContainerReadJsonInput) => {
+            await ensureAppleReady(host, device, signal);
+            const receipt = await host.appleDeployment.readAppContainerJson(
+              device,
+              { appId: input.app, containerPath: input.containerPath },
+              signal,
+            );
+            return { appId: input.app, containerPath: input.containerPath, ...receipt };
+          },
         }
       : {}),
   });

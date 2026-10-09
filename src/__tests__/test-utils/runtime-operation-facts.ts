@@ -25,13 +25,15 @@ const unavailable: RuntimeOperationUnavailability = Object.freeze({
   reason: 'owner-capability-missing',
 });
 
-/** Default facts for tests that are unrelated to application deployment. */
+/** Default facts for tests that are unrelated to application inspection and deployment. */
 const unavailableDeploymentOperationFacts = Object.freeze({
   deployApp: unavailable,
   materializeAppSource: unavailable,
   deployMaterializedApp: unavailable,
   sendPushNotification: unavailable,
   writeAppContainerJson: unavailable,
+  readAppContainerJson: unavailable,
+  observeAppProcesses: unavailable,
 });
 
 /** Default fact for tests that are unrelated to explicit device shutdown. */
