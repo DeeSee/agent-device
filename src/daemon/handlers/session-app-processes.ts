@@ -1,17 +1,15 @@
 // Copyright 2026 Yandex LLC. All rights reserved.
 
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
-import { publicPlatformString } from '@agent-device/kernel/device';
+import { publicPlatformString, type DeviceInfo } from '@agent-device/kernel/device';
 import { appProcessesUse } from '@agent-device/contracts/platform-runtime-operations';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
-import type { SessionStore } from '../session-store.ts';
 import type { BindDeviceRuntime, InspectDeviceRuntimeFacts } from '../request-runtime-binding.ts';
 import { admitRuntimeUse } from '../runtime-admission.ts';
 
 export async function handleAppProcessesCommand(params: {
   req: DaemonRequest;
-  sessionName: string;
-  sessionStore: SessionStore;
+  resolveAppSession: () => Readonly<{ device: DeviceInfo; appBundleId?: string }> | undefined;
   inspectFacts?: InspectDeviceRuntimeFacts;
   bindDevice?: BindDeviceRuntime;
 }): Promise<DaemonResponse> {
@@ -19,7 +17,7 @@ export async function handleAppProcessesCommand(params: {
     if ((params.req.positionals?.length ?? 0) !== 0 || params.req.input !== undefined) {
       throw new AppError('INVALID_ARGS', 'app_processes accepts no command arguments.');
     }
-    const session = params.sessionStore.get(params.sessionName);
+    const session = params.resolveAppSession();
     if (!session?.appBundleId) {
       throw new AppError(
         'SESSION_NOT_FOUND',

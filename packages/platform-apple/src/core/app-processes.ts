@@ -63,6 +63,6 @@ async function simulatorAppProcessIds(
     { appBundleId },
   );
   return parseApplePsOutput(result.stdout)
-    .filter((process) => matchesAppleExecutableProcess(process.command, executable))
+    .filter((processInfo) => matchesAppleExecutableProcess(processInfo.command, executable))
     .map(({ pid }) => pid);
 }

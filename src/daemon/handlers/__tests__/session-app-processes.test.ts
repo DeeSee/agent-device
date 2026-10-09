@@ -3,7 +3,6 @@
 import { expect, test, vi } from 'vitest';
 import { localRuntimeOwner, narrowDeviceBinding } from '@agent-device/contracts/platform-runtime';
 import { handleAppProcessesCommand } from '../session-app-processes.ts';
-import { makeSessionStore } from '../../../__tests__/test-utils/store-factory.ts';
 import { makeIosAppSession } from '../../../__tests__/test-utils/session-factories.ts';
 import { createUnavailableRuntimeFactsForTest } from '../../../__tests__/test-utils/runtime-operation-facts.ts';
 import type { BindDeviceRuntime } from '../../request-runtime-binding.ts';
@@ -16,24 +15,23 @@ const req = {
   flags: {},
 };
 
-test('a reservation without an app refuses before runtime inspection', async () => {
-  const sessionStore = makeSessionStore();
-  const inspectFacts = vi.fn();
-  expect(
-    await handleAppProcessesCommand({
-      req,
-      sessionName: 'case-session',
-      sessionStore,
-      inspectFacts,
-    }),
-  ).toMatchObject({ ok: false, error: { code: 'SESSION_NOT_FOUND' } });
-  expect(inspectFacts).not.toHaveBeenCalled();
-});
+test.each([undefined, { device: makeIosAppSession('case-session').device }])(
+  'a missing or non-app session refuses before runtime inspection',
+  async (session) => {
+    const inspectFacts = vi.fn();
+    expect(
+      await handleAppProcessesCommand({
+        req,
+        resolveAppSession: () => session,
+        inspectFacts,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'SESSION_NOT_FOUND' } });
+    expect(inspectFacts).not.toHaveBeenCalled();
+  },
+);
 
 test('session-bound process observation returns an empty stopped-app set without UI dispatch', async () => {
-  const sessionStore = makeSessionStore();
   const session = makeIosAppSession('case-session');
-  sessionStore.set('case-session', session);
   const owner = localRuntimeOwner('apple');
   const unavailable = createUnavailableRuntimeFactsForTest(session.device, owner);
   const facts = {
@@ -54,8 +52,7 @@ test('session-bound process observation returns an empty stopped-app set without
     );
   const result = await handleAppProcessesCommand({
     req,
-    sessionName: 'case-session',
-    sessionStore,
+    resolveAppSession: () => session,
     inspectFacts: async () => facts,
     bindDevice,
   });
@@ -72,18 +69,22 @@ test('session-bound process observation returns an empty stopped-app set without
 });
 
 test('unsupported facts refuse before native binding', async () => {
-  const sessionStore = makeSessionStore();
   const session = makeIosAppSession('case-session');
-  sessionStore.set('case-session', session);
   const bindDevice = vi.fn();
   const result = await handleAppProcessesCommand({
     req,
-    sessionName: 'case-session',
-    sessionStore,
+    resolveAppSession: () => session,
     inspectFacts: async () =>
       createUnavailableRuntimeFactsForTest(session.device, localRuntimeOwner('apple')),
     bindDevice: bindDevice as BindDeviceRuntime,
   });
   expect(result).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_OPERATION' } });
   expect(bindDevice).not.toHaveBeenCalled();
+});
+
+test('command arguments refuse before resolving an app session', async () => {
+  const resolveAppSession = vi.fn(() => makeIosAppSession('case-session'));
+  const result = await handleAppProcessesCommand({ req: { ...req, input: {} }, resolveAppSession });
+  expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_ARGS' } });
+  expect(resolveAppSession).not.toHaveBeenCalled();
 });
