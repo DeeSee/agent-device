@@ -19,11 +19,13 @@ vi.mock('@agent-device/host-kit/host-file', async (importOriginal) => ({
 }));
 const tool = vi.mocked(runXcrun);
 const read = vi.mocked(readHostTextFile);
+const hostTool = vi.mocked(runAppleToolCommand);
 const bundlePath = '/private/var/apps/selected/Demo.app';
 
 beforeEach(() => {
   vi.clearAllMocks();
   tool.mockReset();
+  hostTool.mockReset();
   read.mockReset();
 });
 
@@ -58,13 +60,40 @@ test('simulator query matches its exact installed executable, scopes the simulat
   expect(tool.mock.calls.every(([, options]) => options?.signal === signal)).toBe(true);
 });
 
-test('a failed simulator process list is not replaced by the host process table', async () => {
+test('a simulator without ps observes only its exact executable in the host process table', async () => {
+  const signal = new AbortController().signal;
   tool.mockResolvedValueOnce({ exitCode: 0, stdout: bundlePath, stderr: '' });
   tool.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'ps unavailable' });
+  hostTool.mockResolvedValueOnce({
+    exitCode: 0,
+    stderr: '',
+    stdout: [
+      '52 0.0 1 /var/apps/selected/Demo.app/Demo',
+      '53 0.0 1 /private/var/apps/another/Demo.app/Demo',
+    ].join('\n'),
+  });
+  expect(await observeIosAppProcesses(IOS_SIMULATOR, 'com.example.app', signal)).toEqual({
+    processIds: [52],
+  });
+  expect(hostTool).toHaveBeenCalledWith(
+    'ps',
+    ['-axo', 'pid=,%cpu=,rss=,command='],
+    expect.objectContaining({ signal }),
+  );
+});
+
+test('cancellation during simulator process observation does not start a host query', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancel simulator ps');
+  tool.mockResolvedValueOnce({ exitCode: 0, stdout: bundlePath, stderr: '' });
+  tool.mockImplementationOnce(async () => {
+    controller.abort(reason);
+    return { exitCode: 1, stdout: '', stderr: 'ps unavailable' };
+  });
   await expect(
-    observeIosAppProcesses(IOS_SIMULATOR, 'com.example.app', new AbortController().signal),
-  ).rejects.toMatchObject({ code: 'COMMAND_FAILED' });
-  expect(runAppleToolCommand).not.toHaveBeenCalled();
+    observeIosAppProcesses(IOS_SIMULATOR, 'com.example.app', controller.signal),
+  ).rejects.toBe(reason);
+  expect(hostTool).not.toHaveBeenCalled();
 });
 
 test('CoreDevice query includes only processes underneath the exact installed app URL', async () => {
@@ -107,6 +136,7 @@ test('a stopped installed app answers an empty process set', async () => {
   expect(
     await observeIosAppProcesses(IOS_SIMULATOR, 'com.example.app', new AbortController().signal),
   ).toEqual({ processIds: [] });
+  expect(hostTool).not.toHaveBeenCalled();
 });
 
 test('cancellation before observation performs no native calls', async () => {

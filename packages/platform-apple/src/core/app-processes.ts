@@ -8,7 +8,7 @@ import { resolveIosDeviceAppProcesses } from './devicectl.ts';
 import { resolveAppleExecutable, parseApplePsOutput } from './perf-target.ts';
 import { matchesAppleExecutableProcess } from './perf-process-identity.ts';
 import { buildSimctlArgsForDevice } from './simctl.ts';
-import { runXcrun } from './tool-provider.ts';
+import { runAppleToolCommand, runXcrun } from './tool-provider.ts';
 
 export async function observeIosAppProcesses(
   device: DeviceInfo,
@@ -48,20 +48,21 @@ async function simulatorAppProcessIds(
   signal: AbortSignal,
 ): Promise<number[]> {
   const executable = await resolveAppleExecutable(device, appBundleId, signal);
-  const result = requireExecSuccess(
-    await runXcrun(
-      buildSimctlArgsForDevice(device, [
-        'spawn',
-        device.id,
-        'ps',
-        '-axo',
-        'pid=,%cpu=,rss=,command=',
-      ]),
-      { allowFailure: true, timeoutMs: 15_000, signal },
-    ),
-    'Failed to list iOS simulator app processes',
-    { appBundleId },
+  const args = ['-axo', 'pid=,%cpu=,rss=,command='];
+  const options = { allowFailure: true, timeoutMs: 15_000, signal };
+  let observation = await runXcrun(
+    buildSimctlArgsForDevice(device, ['spawn', device.id, 'ps', ...args]),
+    options,
   );
+  signal.throwIfAborted();
+  if (observation.exitCode !== 0) {
+    // Simulator processes are host-visible even when the runtime omits ps.
+    // The installed executable path below keeps this query device-specific.
+    observation = await runAppleToolCommand('ps', args, options);
+  }
+  const result = requireExecSuccess(observation, 'Failed to list iOS simulator app processes', {
+    appBundleId,
+  });
   return parseApplePsOutput(result.stdout)
     .filter((processInfo) => matchesAppleExecutableProcess(processInfo.command, executable))
     .map(({ pid }) => pid);
