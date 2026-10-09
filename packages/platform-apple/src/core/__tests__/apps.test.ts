@@ -195,11 +195,12 @@ test('screenshotIos retries simulator capture timeouts and eventually succeeds',
       assert.equal(png.height, 91);
       assert.equal(screenshotAttempts, 3);
 
-      const flat = calls.map((args) => args.join(' '));
+      const captureCalls = calls.filter(isSimctlScreenshot);
+      assert.equal(captureCalls.length, 3, 'should retry screenshot command until success');
       assert.equal(
-        flat.filter((line) => line === `simctl io sim-1 screenshot ${outPath}`).length,
+        new Set(captureCalls.map((args) => args.at(-1))).size,
         3,
-        'should retry screenshot command until success',
+        'each retry must use a fresh staging path',
       );
       assert.deepEqual(
         calls.filter((args) => args[0] === 'open'),
