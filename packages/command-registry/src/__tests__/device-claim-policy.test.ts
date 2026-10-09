@@ -51,7 +51,16 @@ test('every command that deviates from require-owner is a reviewed, diffable set
       'reinstall',
       'shutdown',
     ],
-    observe: ['apps', 'appstate', 'capabilities', 'device', 'devices', 'doctor', 'takeover'],
+    observe: [
+      'app_container_read_json',
+      'apps',
+      'appstate',
+      'capabilities',
+      'device',
+      'devices',
+      'doctor',
+      'takeover',
+    ],
     none: [
       'artifacts',
       'auth',
