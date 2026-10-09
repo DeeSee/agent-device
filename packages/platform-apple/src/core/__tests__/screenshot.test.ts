@@ -59,10 +59,11 @@ import {
 import { ensureBootedSimulator, openIosSimulatorApp } from '../simulator.ts';
 import { prepareSimulatorStatusBarForScreenshot } from '../screenshot-status-bar.ts';
 import { runAppleRunnerCommandWithReceipt } from '../runner-client.ts';
-import { runCmd } from '@agent-device/host-kit/command';
+import { runCmd, type ExecStreamOptions } from '@agent-device/host-kit/command';
+import { PNG } from '@agent-device/capture-kit/png';
 import { withDiagnosticsScope } from '@agent-device/host-kit/diagnostics';
 import { retryWithPolicy } from '@agent-device/host-kit/retry';
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, isRequestCanceledError } from '@agent-device/kernel/errors';
 
 import { IOS_TEST_SIMULATOR, MACOS_TEST_DEVICE } from './apple-core-stub-helpers.ts';
 
@@ -659,3 +660,55 @@ function runnerExecution(data: Record<string, unknown>, runnerSessionId = 'runne
     },
   };
 }
+
+test('simulator capture publishes a complete fresh PNG when its owned command stays alive', async () => {
+  const tmpDir = await mkdtempForTest('agent-device-ios-completion-');
+  const outPath = path.join(tmpDir, 'screen.png');
+  const image = PNG.sync.write(new PNG({ width: 2, height: 3 }));
+  const script = `require('node:fs').writeFileSync(process.argv[1], Buffer.from('${image.toString('base64')}', 'base64')); setInterval(() => {}, 1000);`;
+  let exitSignal: NodeJS.Signals | null = null;
+  mockRunCmd.mockImplementation(
+    async (_cmd, args, options) =>
+      await execActual.runCmdStreaming(process.execPath, ['-e', script, String(args.at(-1))], {
+        ...options,
+        timeoutMs: 500,
+        onSpawn: (child) => {
+          (options as ExecStreamOptions)?.onSpawn?.(child);
+          child.on('exit', (_code, signal) => {
+            exitSignal = signal;
+          });
+        },
+      }),
+  );
+  await captureSimulatorScreenshotWithRetry(IOS_TEST_SIMULATOR, outPath);
+  assert.deepEqual(await fs.readFile(outPath), image);
+  assert.equal(exitSignal, 'SIGINT');
+});
+
+test('caller cancellation prevents boot retry and runner fallback after a capture failure', async () => {
+  const controller = new AbortController();
+  const captureWithRunner = vi.fn();
+  const ensureBooted = vi.fn();
+  await assert.rejects(
+    captureSimulatorScreenshotWithFallback(IOS_TEST_SIMULATOR, '/tmp/unused.png', {
+      skipIosSimulatorBootCheck: true,
+      runnerOptions: { signal: controller.signal },
+      deps: {
+        resolveCaptureTarget: async () => ({}),
+        ensureBooted,
+        captureWithRunner,
+        shouldFallbackToRunner: () => true,
+        captureWithRetry: async (_device, _outPath, _display, signal) => {
+          assert.equal(signal, controller.signal);
+          controller.abort();
+          throw new AppError('COMMAND_FAILED', 'simctl screenshot timed out', {
+            stderr: 'Current state: Shutdown',
+          });
+        },
+      },
+    }),
+    isRequestCanceledError,
+  );
+  assert.equal(ensureBooted.mock.calls.length, 0);
+  assert.equal(captureWithRunner.mock.calls.length, 0);
+});

@@ -1,5 +1,9 @@
 import { beforeEach, describe, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { PNG } from '@agent-device/capture-kit/png';
+import { mkdtempForTest } from '../../__tests__/tmp-dir.ts';
 
 vi.mock('../simctl.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../simctl.ts')>();
@@ -496,27 +500,31 @@ describe('appleSimulatorDisplayArgvFragment', () => {
 describe('captureSimulatorScreenshotWithRetry display targeting', () => {
   beforeEach(() => {
     mockRunSimctlForDevice.mockClear();
+    mockRunSimctlForDevice.mockImplementation(async (_device, args) => {
+      await fs.writeFile(String(args.at(-1)), PNG.sync.write(new PNG({ width: 2, height: 3 })));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
   });
 
   test('names the lit panel explicitly instead of accepting the black default', async () => {
-    await captureSimulatorScreenshotWithRetry(IOS_TEST_SIMULATOR, '/tmp/duo.png', outerPanel);
+    const outPath = path.join(await mkdtempForTest('agent-device-display-capture-'), 'duo.png');
+    await captureSimulatorScreenshotWithRetry(IOS_TEST_SIMULATOR, outPath, outerPanel);
     assert.equal(mockRunSimctlForDevice.mock.calls.length, 1);
-    assert.deepEqual(mockRunSimctlForDevice.mock.calls[0]![1], [
+    assert.deepEqual(mockRunSimctlForDevice.mock.calls[0]![1].slice(0, -1), [
       'io',
       IOS_TEST_SIMULATOR.id,
       'screenshot',
       '--display=LCD',
-      '/tmp/duo.png',
     ]);
   });
 
   test('omits the display flag for a single-panel device', async () => {
-    await captureSimulatorScreenshotWithRetry(IOS_TEST_SIMULATOR, '/tmp/duo.png', undefined);
-    assert.deepEqual(mockRunSimctlForDevice.mock.calls[0]![1], [
+    const outPath = path.join(await mkdtempForTest('agent-device-display-capture-'), 'duo.png');
+    await captureSimulatorScreenshotWithRetry(IOS_TEST_SIMULATOR, outPath, undefined);
+    assert.deepEqual(mockRunSimctlForDevice.mock.calls[0]![1].slice(0, -1), [
       'io',
       IOS_TEST_SIMULATOR.id,
       'screenshot',
-      '/tmp/duo.png',
     ]);
   });
 });

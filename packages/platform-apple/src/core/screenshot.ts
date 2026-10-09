@@ -25,7 +25,10 @@ import { runAppleRunnerCommandWithReceipt } from './runner-client.ts';
 import { type AppleRunnerCommandOptions } from '../runner/index.ts';
 import { prepareSimulatorStatusBarForScreenshot } from './screenshot-status-bar.ts';
 import {
-  appleSimulatorDisplayArgvFragment,
+  captureSimulatorScreenshotAttempt,
+  throwIfSimulatorScreenshotCanceled,
+} from './simulator-screenshot.ts';
+import {
   resolveAppleCaptureTarget,
   type AppleCaptureTarget,
   type AppleDeviceDisplay,
@@ -43,6 +46,7 @@ type SimulatorScreenshotFlowDeps = {
     device: DeviceInfo,
     outPath: string,
     display: AppleDeviceDisplay | undefined,
+    signal?: AbortSignal,
   ) => Promise<void>;
   /**
    * Rescales the captured file to the requested density using the scale of the image that was
@@ -130,6 +134,8 @@ export async function captureSimulatorScreenshotWithFallback(
     );
   }
 
+  const signal = options.runnerOptions?.signal;
+  throwIfSimulatorScreenshotCanceled(signal);
   const deps = { ...defaultSimulatorScreenshotFlowDeps, ...(options.deps ?? {}) };
 
   if (!options.skipIosSimulatorBootCheck) {
@@ -140,7 +146,7 @@ export async function captureSimulatorScreenshotWithFallback(
   const { display, displayRotation } = await deps.resolveCaptureTarget(device);
   const captureFacts: ScreenshotCaptureFacts = displayRotation ? { displayRotation } : {};
   const captureAndNormalize = async () => {
-    await deps.captureWithRetry(device, outPath, display);
+    await deps.captureWithRetry(device, outPath, display, signal);
     await deps.normalizeDensity(device, outPath, options.pixelDensity, display?.pointScale);
   };
   let restoreStatusBar = async () => {};
@@ -156,6 +162,7 @@ export async function captureSimulatorScreenshotWithFallback(
       await captureAndNormalize();
       return captureFacts;
     } catch (error) {
+      throwIfSimulatorScreenshotCanceled(signal);
       let screenshotError = error;
       if (
         options.skipIosSimulatorBootCheck &&
@@ -166,6 +173,7 @@ export async function captureSimulatorScreenshotWithFallback(
           await captureAndNormalize();
           return captureFacts;
         } catch (retryError) {
+          throwIfSimulatorScreenshotCanceled(signal);
           screenshotError = retryError;
         }
       }
@@ -174,6 +182,7 @@ export async function captureSimulatorScreenshotWithFallback(
       }
       emitScreenshotFallbackDiagnostic(device, 'simctl_screenshot', screenshotError);
     }
+    throwIfSimulatorScreenshotCanceled(signal);
     const captured = await deps.captureWithRunner(
       device,
       outPath,
@@ -198,23 +207,18 @@ export async function captureSimulatorScreenshotWithRetry(
   device: DeviceInfo,
   outPath: string,
   display?: AppleDeviceDisplay,
+  signal?: AbortSignal,
 ): Promise<void> {
   const deadline = Deadline.fromTimeoutMs(IOS_SIMULATOR_SCREENSHOT_TIMEOUT_MS);
-  const argv = [
-    'io',
-    device.id,
-    'screenshot',
-    ...appleSimulatorDisplayArgvFragment(display),
-    outPath,
-  ];
   await retryWithPolicy(
     async ({ deadline: attemptDeadline }) => {
-      await runSimctlForDevice(device, argv, {
-        timeoutMs: Math.max(
-          1_000,
-          attemptDeadline?.remainingMs() ?? IOS_SIMULATOR_SCREENSHOT_TIMEOUT_MS,
-        ),
-      });
+      await captureSimulatorScreenshotAttempt(
+        device,
+        outPath,
+        display,
+        Math.max(1_000, attemptDeadline?.remainingMs() ?? IOS_SIMULATOR_SCREENSHOT_TIMEOUT_MS),
+        signal,
+      );
     },
     {
       maxAttempts: IOS_SIMULATOR_SCREENSHOT_RETRY_MAX_ATTEMPTS,
@@ -223,7 +227,7 @@ export async function captureSimulatorScreenshotWithRetry(
       jitter: 0.2,
       shouldRetry: (error) => shouldRetryIosSimulatorScreenshot(error),
     },
-    { deadline, phase: 'ios_simulator_screenshot' },
+    { deadline, signal, phase: 'ios_simulator_screenshot' },
   );
 }
 

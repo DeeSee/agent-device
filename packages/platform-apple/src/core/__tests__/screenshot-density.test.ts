@@ -56,9 +56,7 @@ test('screenshotIos caches simulator screen scale per device', async () => {
       1,
     );
     assert.equal(
-      calls.filter(
-        (args) => startsWithArgs(args, ['io', device.id, 'screenshot']) && args[3] === outPath,
-      ).length,
+      calls.filter((args) => startsWithArgs(args, ['io', device.id, 'screenshot'])).length,
       2,
     );
   } finally {
