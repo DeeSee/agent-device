@@ -752,12 +752,50 @@ test('device argv shares device concurrency and carries complete explicit signin
       'DEVELOPMENT_TEAM=SECRET_TEAM',
       'CODE_SIGN_IDENTITY=SECRET_CERTIFICATE',
       'CODE_SIGN_STYLE=Manual',
-      'PROVISIONING_PROFILE_SPECIFIER=SECRET_PROFILE',
+      'AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE=SECRET_PROFILE',
       'CODE_SIGNING_ALLOWED=YES',
       'CODE_SIGNING_REQUIRED=YES',
     ]),
   );
+  expect(args.some((argument) => argument.startsWith('PROVISIONING_PROFILE_SPECIFIER='))).toBe(
+    false,
+  );
   expect(args).not.toContain('-allowProvisioningUpdates');
+});
+
+test('manual provisioning belongs only to the app and UI-test target configurations', () => {
+  const project = fs.readFileSync(
+    new URL(
+      '../../../../../apple/runner/AgentDeviceRunner/AgentDeviceRunner.xcodeproj/project.pbxproj',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  const configurations = [
+    ...project.matchAll(
+      /isa = XCBuildConfiguration;\s*buildSettings = \{([\s\S]*?)\n\s*\};\s*name = (Debug|Release);/g,
+    ),
+  ];
+  expect(configurations).toHaveLength(6);
+  const owners: string[] = [];
+  for (const configuration of configurations) {
+    const settings = configuration[1] ?? '';
+    const bundle = /PRODUCT_BUNDLE_IDENTIFIER = "([^"\n]+)";/.exec(settings)?.[1];
+    if (bundle === undefined) {
+      expect(settings).not.toContain('PROVISIONING_PROFILE_SPECIFIER');
+      continue;
+    }
+    expect(settings).toContain(
+      'PROVISIONING_PROFILE_SPECIFIER = "$(AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE)";',
+    );
+    owners.push(bundle);
+  }
+  expect(owners.sort()).toEqual([
+    '$(AGENT_DEVICE_IOS_RUNNER_APP_BUNDLE_ID)',
+    '$(AGENT_DEVICE_IOS_RUNNER_APP_BUNDLE_ID)',
+    '$(AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID)',
+    '$(AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID)',
+  ]);
 });
 
 test.each([

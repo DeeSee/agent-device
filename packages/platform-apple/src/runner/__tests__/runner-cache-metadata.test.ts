@@ -103,7 +103,7 @@ test('resolveRunnerSigningBuildSettings applies optional overrides when provided
     'CODE_SIGN_STYLE=Manual',
     'DEVELOPMENT_TEAM=ABCDE12345',
     'CODE_SIGN_IDENTITY=Apple Development',
-    'PROVISIONING_PROFILE_SPECIFIER=My Profile',
+    'AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE=My Profile',
   ]);
 });
 
@@ -114,7 +114,7 @@ test('resolveRunnerSigningBuildSettings switches to manual signing when a profil
   );
   assert.deepEqual(settings, [
     'CODE_SIGN_STYLE=Manual',
-    'PROVISIONING_PROFILE_SPECIFIER=My Profile',
+    'AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE=My Profile',
   ]);
 });
 

@@ -597,7 +597,7 @@ export function resolveRunnerSigningBuildSettings(
   if (configuredIdentity) {
     args.push(`CODE_SIGN_IDENTITY=${configuredIdentity}`);
   }
-  if (profile) args.push(`PROVISIONING_PROFILE_SPECIFIER=${profile}`);
+  if (profile) args.push(`AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE=${profile}`);
   return args;
 }
 

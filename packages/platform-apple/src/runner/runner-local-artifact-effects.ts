@@ -114,7 +114,7 @@ function optionalBuildSettings(input: AppleRunnerArtifactBuildInput): string[] {
     ['DEVELOPMENT_TEAM', settings.developmentTeam],
     ['CODE_SIGN_IDENTITY', settings.codeSignIdentity],
     ['CODE_SIGN_STYLE', settings.codeSignStyle],
-    ['PROVISIONING_PROFILE_SPECIFIER', settings.provisioningProfileSpecifier],
+    ['AGENT_DEVICE_IOS_RUNNER_PROVISIONING_PROFILE', settings.provisioningProfileSpecifier],
     ['CODE_SIGNING_ALLOWED', settings.codeSigningAllowed],
     ['CODE_SIGNING_REQUIRED', settings.codeSigningRequired],
   ].flatMap(([name, value]) => (value === null ? [] : [`${name}=${value}`]));
