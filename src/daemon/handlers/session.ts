@@ -117,7 +117,13 @@ const handleSessionObservabilityCommandGroup: SessionCommandHandler = async ({
  * clusters) map several keys to the SAME handler reference below.
  */
 const SESSION_COMMAND_HANDLER_IMPLS = {
-  app_processes: handleAppProcessesCommand,
+  app_processes: async ({ req, sessionName, sessionStore, inspectFacts, bindDevice }) =>
+    await handleAppProcessesCommand({
+      req,
+      resolveAppSession: () => sessionStore.get(sessionName),
+      inspectFacts,
+      bindDevice,
+    }),
   app_container_read_json: async ({ req, sessionName, sessionStore, inspectFacts, bindDevice }) =>
     await handleAppContainerJsonReadCommand({
       req,
