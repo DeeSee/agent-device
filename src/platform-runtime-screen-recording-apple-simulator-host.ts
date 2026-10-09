@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { execFailureDetails } from '@agent-device/host-kit/command';
 import { AppError } from '@agent-device/kernel/errors';
 import type {
@@ -28,14 +29,29 @@ const appleSimulatorRecordingCommandMatches: ManagedProcessCommandMatcher = (
   observed,
 ) => {
   if (persisted === observed) return true;
+  const wrapperArgs =
+    /^\/bin\/bash \/Applications\/Xcode[^/\s]*\.app\/Contents\/Developer\/usr\/bin\/simctl (.+)$/.exec(
+      persisted,
+    )?.[1];
+  const coreSimulatorArgs =
+    /^\/Library\/Developer\/PrivateFrameworks\/CoreSimulator\.framework\/Versions\/A\/Resources\/bin\/simctl (.+)$/.exec(
+      observed,
+    )?.[1];
   const xcrunArgs = /^(?:\S*\/)?xcrun simctl (.+)$/.exec(persisted)?.[1];
   const simctlArgs = /^(?:\S*\/)?simctl (.+)$/.exec(observed)?.[1];
   return (
-    xcrunArgs !== undefined &&
-    xcrunArgs === simctlArgs &&
-    /^(?:--set .+ )?io \S+ recordVideo .+$/.test(xcrunArgs)
+    recordingArgumentsMatch(wrapperArgs, coreSimulatorArgs) ||
+    recordingArgumentsMatch(xcrunArgs, simctlArgs)
   );
 };
+
+function recordingArgumentsMatch(persisted: string | undefined, observed: string | undefined) {
+  return (
+    persisted !== undefined &&
+    persisted === observed &&
+    /^(?:--set .+ )?io \S+ recordVideo .+$/.test(persisted)
+  );
+}
 
 type AppleSimulatorExit =
   | Readonly<{ kind: 'exited'; result: HostCommandResult }>
@@ -76,21 +92,40 @@ export async function startAppleSimulatorRecording(
   }
   try {
     await waitForReadiness(outputPath, background.wait, signal);
-    // `runCmdBackground('xcrun', ...)` may briefly expose its shell wrapper before that
-    // process execs CoreSimulator's `simctl`. Read the root identity again after the output
-    // proves the recorder is ready so the durable descriptor and generic startup reaper share
-    // the stable post-exec identity already used by the live Apple matcher.
-    const postExecRootMarker = (await resolveManagedProcessIdentity(rootMarker.pid)) ?? rootMarker;
+    const postExecRootMarker = await resolveManagedProcessIdentity(rootMarker.pid);
+    if (
+      !postExecRootMarker ||
+      postExecRootMarker.pid !== rootMarker.pid ||
+      postExecRootMarker.startTime !== rootMarker.startTime ||
+      !appleSimulatorRecordingCommandMatches(rootMarker.command, postExecRootMarker.command)
+    ) {
+      throw new AppError('COMMAND_FAILED', 'simctl recordVideo ownership changed during startup', {
+        reason: 'ownership-fence-lost',
+      });
+    }
     const markers = await resolveManagedProcessTree(postExecRootMarker);
     return createAppleSimulatorProcess(background, markers);
   } catch (error) {
-    await terminateManagedProcessSet(
+    const cleanup = await terminateManagedProcessSet(
       [rootMarker],
       background,
       appleSimulatorRecordingCommandMatches,
-    ).catch(() => {});
-    await background.wait.catch(() => undefined);
-    fs.rmSync(outputPath, { force: true });
+    ).catch(() => undefined);
+    if (cleanup === 'terminated' || cleanup === 'already-missing') {
+      await background.wait.catch(() => undefined);
+      fs.rmSync(outputPath, { force: true });
+    } else {
+      emitDiagnostic({
+        level: 'error',
+        phase: 'simulator_recording_start_cleanup_unconfirmed',
+        data: {
+          pid: rootMarker.pid,
+          startTime: rootMarker.startTime,
+          outcome: cleanup ?? 'failed',
+        },
+      });
+      void background.wait.catch(() => undefined);
+    }
     signal?.throwIfAborted();
     throw error;
   }

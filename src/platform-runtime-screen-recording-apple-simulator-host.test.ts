@@ -489,3 +489,142 @@ async function withTransport<T>(
     task,
   );
 }
+
+const coreSimulatorSimctl =
+  '/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl';
+const xcodeSimctlWrapper = '/Applications/Xcode-26.5.0.app/Contents/Developer/usr/bin/simctl';
+
+test('publishes the same process post-exec identity after recording output becomes ready', async () => {
+  const root = mkdtempForTestSync('agent-device-recording-wrapper-ready-');
+  const outputPath = path.join(root, 'capture.mp4');
+  const args = `io ${simulator.id} recordVideo ${outputPath}`;
+  const running = background(51, `/bin/bash ${xcodeSimctlWrapper} ${args}`);
+  const starting = withTransport(
+    running.process,
+    async () => await startAppleSimulatorRecording(simulator, outputPath),
+  );
+  setTimeout(() => {
+    processes.commands.set(51, `${coreSimulatorSimctl} ${args}`);
+    fs.writeFileSync(outputPath, 'recording');
+  }, 25);
+  const process = await starting;
+  expect(process.markers?.[0]).toEqual({
+    pid: 51,
+    startTime: 'start-51',
+    command: `${coreSimulatorSimctl} ${args}`,
+  });
+  await expect(process.terminate()).resolves.toBeUndefined();
+  expect(running.kill).toHaveBeenCalledWith('SIGINT');
+});
+
+test('reclaims a durable Xcode wrapper marker after its same-process CoreSimulator exec', async () => {
+  const args = `io ${simulator.id} recordVideo /tmp/orphan.mp4`;
+  const running = background(52, `${coreSimulatorSimctl} ${args}`);
+  const marker = {
+    pid: 52,
+    startTime: 'start-52',
+    command: `/bin/bash ${xcodeSimctlWrapper} ${args}`,
+  };
+  const host = createAppleScreenRecordingHost();
+  await expect(host.inspectProcess(marker)).resolves.toBe('owned-alive');
+  await expect(host.terminateProcess(marker)).resolves.toBe('terminated');
+  expect(processes.alive.get(52)).toBe(false);
+  expect(running.kill).not.toHaveBeenCalled();
+  running.resolveWait({ stdout: '', stderr: '', exitCode: 0 });
+});
+
+test.each(['start', 'device', 'output', 'executable', 'wrapper'] as const)(
+  'wrapper exec equivalence preserves the %s ownership fence',
+  async (changed) => {
+    const args = `io ${simulator.id} recordVideo /tmp/fenced.mp4`;
+    const running = background(53, `${coreSimulatorSimctl} ${args}`);
+    const marker = {
+      pid: 53,
+      startTime: 'start-53',
+      command: `/bin/bash ${xcodeSimctlWrapper} ${args}`,
+    };
+    const host = createAppleScreenRecordingHost();
+    await expect(host.inspectProcess(marker)).resolves.toBe('owned-alive');
+    if (changed === 'start') processes.starts.set(53, 'reused-pid');
+    if (changed === 'device')
+      processes.commands.set(53, `${coreSimulatorSimctl} io other recordVideo /tmp/fenced.mp4`);
+    if (changed === 'output')
+      processes.commands.set(
+        53,
+        `${coreSimulatorSimctl} io ${simulator.id} recordVideo /tmp/other.mp4`,
+      );
+    if (changed === 'executable') processes.commands.set(53, `/tmp/simctl ${args}`);
+    if (changed === 'wrapper')
+      marker.command = `/bin/bash /tmp/Xcode.app/Contents/Developer/usr/bin/simctl ${args}`;
+    await expect(host.inspectProcess(marker)).resolves.toBe('ownership-lost');
+    await expect(host.terminateProcess(marker)).resolves.toBe('ownership-lost');
+    expect(processes.alive.get(53)).toBe(true);
+    expect(running.kill).not.toHaveBeenCalled();
+    running.resolveWait({ stdout: '', stderr: '', exitCode: 0 });
+  },
+);
+
+test('rejects a reused process identity at readiness without waiting for its unowned recorder', async () => {
+  const root = mkdtempForTestSync('agent-device-recording-wrapper-reused-');
+  const outputPath = path.join(root, 'capture.mp4');
+  const args = `io ${simulator.id} recordVideo ${outputPath}`;
+  const running = background(54, `/bin/bash ${xcodeSimctlWrapper} ${args}`);
+  const starting = withTransport(
+    running.process,
+    async () => await startAppleSimulatorRecording(simulator, outputPath),
+  );
+  setTimeout(() => {
+    processes.starts.set(54, 'reused-pid');
+    processes.commands.set(54, `${coreSimulatorSimctl} ${args}`);
+    fs.writeFileSync(outputPath, 'recording');
+  }, 25);
+  try {
+    const result = await Promise.race([
+      starting.then(
+        () => 'published',
+        () => 'rejected',
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve('waiting'), 500)),
+    ]);
+    expect(result).toBe('rejected');
+    expect(running.kill).not.toHaveBeenCalled();
+    expect(processes.alive.get(54)).toBe(true);
+  } finally {
+    running.resolveWait({ stdout: '', stderr: '', exitCode: 0 });
+    await starting.catch(() => undefined);
+  }
+});
+
+test('readiness cancellation retains a refused ownership fence without awaiting the live process', async () => {
+  const root = mkdtempForTestSync('agent-device-recording-wrapper-refused-');
+  const outputPath = path.join(root, 'capture.mp4');
+  const controller = new AbortController();
+  const reason = new Error('cancel after identity changed');
+  const running = background(
+    55,
+    `/bin/bash ${xcodeSimctlWrapper} io ${simulator.id} recordVideo ${outputPath}`,
+  );
+  const starting = withTransport(
+    running.process,
+    async () => await startAppleSimulatorRecording(simulator, outputPath, controller.signal),
+  );
+  setTimeout(() => {
+    processes.starts.set(55, 'reused-pid');
+    controller.abort(reason);
+  }, 25);
+  try {
+    const result = await Promise.race([
+      starting.then(
+        () => 'published',
+        (error) => error,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve('waiting'), 100)),
+    ]);
+    expect(result).toBe(reason);
+    expect(running.kill).not.toHaveBeenCalled();
+    expect(processes.alive.get(55)).toBe(true);
+  } finally {
+    running.resolveWait({ stdout: '', stderr: '', exitCode: 0 });
+    await starting.catch(() => undefined);
+  }
+});
