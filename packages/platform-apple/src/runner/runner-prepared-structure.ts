@@ -2,6 +2,7 @@ import { AppError } from '@agent-device/kernel/errors';
 import type { XmlNode } from '@agent-device/xml';
 import {
   preparedDictionaryEntries,
+  readPreparedDictionaryEntry,
   readPreparedDictionaryString,
 } from './runner-prepared-plist.ts';
 
@@ -50,7 +51,11 @@ export function collectPreparedStructuralIdentity(
     throw invalidPreparedStructure('XCTest runner test-host identity is ambiguous');
   }
 
-  const unownedProductReferences = collectProductReferences(root, new Set(targets));
+  const excludedNodes = new Set(targets);
+  // Coverage build variants are report metadata, not products installed to run a test target.
+  const coverageBuildables = readPreparedDictionaryEntry(root, 'CodeCoverageBuildableInfos');
+  if (coverageBuildables) excludedNodes.add(coverageBuildables);
+  const unownedProductReferences = collectProductReferences(root, excludedNodes);
   if (unownedProductReferences.some((reference) => reference.startsWith('__TESTHOST__/'))) {
     throw invalidPreparedStructure('XCTest runner has an unowned test-host product reference');
   }

@@ -61,6 +61,49 @@ test('verification rejects stale digests and missing referenced products', () =>
   );
 });
 
+test('coverage build metadata stays digest-bound without becoming a launch dependency', () => {
+  const source = xctestrunXml().replace(
+    '</dict></plist>',
+    '<key>CodeCoverageBuildableInfos</key><array><dict><key>ProductPaths</key><array>' +
+      '<string>__TESTROOT__/Debug-iphoneos/PackageFrameworks/Presentation.framework/Presentation</string>' +
+      '</array></dict></array></dict></plist>',
+  );
+  const fixture = createFixture(source);
+  const receipt = verifyAppleRunnerXctestrun({
+    productsRoot: fixture.productsRoot,
+    baseXctestrunRelativePath: fixture.baseRelativePath,
+    expectedBaseSha256: sha256(fixture.base),
+  });
+  const changed = createFixture(source.replace('Presentation.framework', 'Other.framework'));
+  const changedReceipt = verifyAppleRunnerXctestrun({
+    productsRoot: changed.productsRoot,
+    baseXctestrunRelativePath: changed.baseRelativePath,
+    expectedBaseSha256: sha256(changed.base),
+  });
+  expect(receipt.base.rawSha256).not.toBe(changedReceipt.base.rawSha256);
+  expect(receipt.base.semanticSha256).not.toBe(changedReceipt.base.semanticSha256);
+  expect(receipt.structuralIdentity).toEqual(changedReceipt.structuralIdentity);
+
+  const missingDependency = createFixture(
+    source.replace(
+      '<key>TestBundlePath</key>',
+      '<key>DependentProductPaths</key><array>' +
+        '<string>__TESTROOT__/Debug-iphoneos/Runtime.framework</string></array><key>TestBundlePath</key>',
+    ),
+  );
+  expect(() =>
+    verifyAppleRunnerXctestrun({
+      productsRoot: missingDependency.productsRoot,
+      baseXctestrunRelativePath: missingDependency.baseRelativePath,
+      expectedBaseSha256: sha256(missingDependency.base),
+    }),
+  ).toThrowError(
+    expect.objectContaining({
+      details: expect.objectContaining({ reason: 'runner_preparation_product_missing' }),
+    }),
+  );
+});
+
 test('verification rejects symlinked products and reusable port-bound plists', () => {
   const symlinked = createFixture();
   const productPath = path.join(symlinked.productsRoot, 'Debug-iphoneos/AgentDeviceRunner.app');
