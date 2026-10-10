@@ -6,8 +6,6 @@ export type AppProcessesRuntimeOperations = Readonly<{
   observeAppProcesses(input: AppProcessesRuntimeInput): Promise<AppProcessesRuntimeResult>;
 }>;
 
-export { appProcessesUse } from './platform-runtime-operations.ts';
-
 export const appProcessesUnsupported = Object.freeze({
   available: false,
   reason: 'unsupported-platform-leaf',

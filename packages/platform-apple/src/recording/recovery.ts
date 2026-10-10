@@ -1,4 +1,4 @@
-import { deviceIdentity, isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
+import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import type {
   CleanupOutcome,
   ReattachOutcome,
@@ -12,7 +12,6 @@ import type {
   ManagedProcessIdentity,
   OwnedProcessRecordScope,
 } from '@agent-device/contracts/platform-runtime-host';
-import type { RuntimeOwnerRef } from '@agent-device/contracts/platform-runtime';
 import type {
   ScreenRecordingRuntimeHost,
   AppleRunnerRecordingAuthority,
@@ -23,9 +22,7 @@ import {
   type ScreenRecordingCompletion,
   type ScreenRecordingLiveHandle,
   type ScreenRecordingLiveSnapshot,
-  type ScreenRecordingStartInput,
 } from '@agent-device/contracts/screen-recording-runtime';
-import { createDurableResourceEnvelope, encodeDurableDescriptor } from '@agent-device/capture-kit';
 import {
   RECORDING_FACTS_KEYS,
   recordingFactsAreValid,
@@ -104,30 +101,12 @@ const encodeAppleRecordingDescriptor: AppleRecordingDescriptorCodec['encode'] = 
   return encoded;
 };
 
-const descriptorCodec: AppleRecordingDescriptorCodec = Object.freeze({
+export const appleRecordingDescriptorCodec: AppleRecordingDescriptorCodec = Object.freeze({
   resourceKind: SCREEN_RECORDING_RESOURCE_KIND,
   version: 2,
   encode: encodeAppleRecordingDescriptor,
   decode: (body) => decodeAppleRecordingDescriptor(body),
 });
-
-export function createAppleRecordingEnvelope(params: {
-  device: DeviceInfo;
-  owner: RuntimeOwnerRef;
-  input: ScreenRecordingStartInput;
-  descriptor: AppleRecordingDescriptor;
-}) {
-  const { device, owner, input, descriptor } = params;
-  return createDurableResourceEnvelope({
-    resourceKind: SCREEN_RECORDING_RESOURCE_KIND,
-    sessionId: input.sessionId,
-    device: deviceIdentity(device),
-    owner,
-    fence: input.fence,
-    lifecycle: 'open',
-    descriptor: encodeDurableDescriptor(descriptorCodec, descriptor),
-  });
-}
 
 /**
  * The part of a live snapshot that outlives its daemon. What the recorder's own process held — gesture
@@ -150,7 +129,7 @@ export async function cleanupAppleRecording(
   body: Parameters<AppleRecordingDescriptorCodec['decode']>[0],
   sessionId?: string,
 ): Promise<CleanupOutcome> {
-  const decoded = descriptorCodec.decode(body);
+  const decoded = appleRecordingDescriptorCodec.decode(body);
   if (decoded.status !== 'decoded' || !descriptorMatchesAppleDevice(device, decoded.descriptor)) {
     return { status: 'cleanup-pending', reason: 'manual-recovery-required' };
   }
@@ -261,7 +240,7 @@ export async function reattachAppleRecording(
   }>,
 ): Promise<AppleRecordingReattachment> {
   const { host, device, envelope } = params;
-  const decoded = descriptorCodec.decode(envelope.descriptor.body);
+  const decoded = appleRecordingDescriptorCodec.decode(envelope.descriptor.body);
   if (decoded.status !== 'decoded') {
     return unreattachableAppleRecording('descriptor-invalid', decoded.message);
   }
@@ -522,7 +501,7 @@ function descriptorMatchesAppleDevice(
   device: DeviceInfo,
   descriptor: AppleRecordingDescriptor,
 ): boolean {
-  if (device.kind === 'simulator') return descriptor.backend === 'simctl';
+  if (device.kind === 'simulator' && descriptor.backend === 'simctl') return true;
   if (descriptor.backend !== 'runner') return false;
   if (device.appleOs === 'macos') return descriptor.recordingAuthority.remotePath === undefined;
   return isIosFamily(device)

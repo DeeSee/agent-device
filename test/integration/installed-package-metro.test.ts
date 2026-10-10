@@ -374,6 +374,7 @@ test('installed package exposes Node APIs and packaged companion tunnel entrypoi
       'centerOfRect',
       'createAgentDeviceClient',
       'createLocalArtifactAdapter',
+      'interactionTargetFingerprint',
       'isAgentDeviceError',
       'normalizeAgentDeviceError',
     ]);

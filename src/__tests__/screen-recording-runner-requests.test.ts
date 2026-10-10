@@ -72,10 +72,10 @@ test('screen recording runner requests match their runner-requests.json entries'
   let started;
   try {
     started = await transport.start({ ...request, device, fps: 30 });
+    await transport.start({ ...request, device: simulator });
   } finally {
     vi.useRealTimers();
   }
-  await transport.start({ ...request, device: simulator });
   await transport.start({ ...request, device: macosDevice });
   await transport.stop({
     device,

@@ -60,7 +60,7 @@ export type AppleScreenRecordingRunnerResult = Readonly<{
 }>;
 
 export type AppleScreenRecordingAvailability =
-  | Readonly<{ available: true }>
+  | Readonly<{ available: true; appRecordingBackend: 'runner' | 'simulator' }>
   | Readonly<{ available: false; hint: string }>;
 
 export type AppleScreenRecordingClockAnchor = Readonly<{

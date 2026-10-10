@@ -100,8 +100,7 @@ async function startLocalAppleRunnerRecording({
     await loadAppleRunnerRecordingOperations();
   const { withRunnerCommandId } = await loadAppleRunnerRecordingOperations();
   const recordingFileName = `agent-device-recording-${Date.now()}.mp4`;
-  const remotePath =
-    device.appleOs === 'macos' || device.kind !== 'device' ? undefined : `tmp/${recordingFileName}`;
+  const remotePath = device.appleOs === 'macos' ? undefined : `tmp/${recordingFileName}`;
   const command = withRunnerCommandId({
     command: 'recordStart',
     outPath: runnerOutputPath(device, outputPath, recordingFileName, remotePath),
@@ -379,14 +378,11 @@ async function retrieveLocalRunnerRecording(
       recordingAuthority,
       async ({ remotePath, testHostContainerBundleId }) => {
         signal?.throwIfAborted();
-        const { resolveIosPhysicalDeviceControl } =
-          await import('@agent-device/platform-apple/physical-device');
-        await resolveIosPhysicalDeviceControl(device).copyRunnerFile(
+        await copyRunnerRecording(
           device,
           remotePath,
           outputPath,
           testHostContainerBundleId,
-          undefined,
           signal,
         );
         signal?.throwIfAborted();
@@ -407,20 +403,55 @@ async function retrieveActiveRunnerRecording(
     await loadAppleRunnerRecordingOperations();
   await assertRunnerRecordingAuthority(device.id, recordingAuthority);
   signal?.throwIfAborted();
-  const { resolveIosPhysicalDeviceControl } =
-    await import('@agent-device/platform-apple/physical-device');
-  await resolveIosPhysicalDeviceControl(device).copyRunnerFile(
+  await copyRunnerRecording(
     device,
     remotePath,
     outputPath,
     recordingAuthority.launchIdentity.testHostContainerBundleId,
-    undefined,
     signal,
   );
   // Once release starts, retrieval is committed: a later cancellation must not
   // retroactively turn a copied-and-released take back into retryable authority.
   signal?.throwIfAborted();
   await releaseRunnerRecordingPin(device.id, recordingAuthority, 'retrieved');
+}
+
+async function copyRunnerRecording(
+  device: DeviceInfo,
+  remotePath: string,
+  outputPath: string,
+  bundleId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (device.kind === 'simulator') {
+    const [{ buildSimctlArgsForDevice }, { runCmd }, { copyHostFile }] = await Promise.all([
+      import('@agent-device/platform-apple/simctl'),
+      import('@agent-device/host-kit/command'),
+      import('@agent-device/host-kit/host-file'),
+    ]);
+    const result = await runCmd(
+      'xcrun',
+      buildSimctlArgsForDevice(device, ['get_app_container', device.id, bundleId, 'data']),
+      { signal, timeoutMs: 10_000 },
+    );
+    const container = result.stdout.trim();
+    if (!path.isAbsolute(container) || !/^tmp\/agent-device-recording-\d+\.mp4$/.test(remotePath)) {
+      throw new Error('Simulator runner recording has no valid container or media path');
+    }
+    signal?.throwIfAborted();
+    await copyHostFile(path.join(container, remotePath), outputPath);
+    return;
+  }
+  const { resolveIosPhysicalDeviceControl } =
+    await import('@agent-device/platform-apple/physical-device');
+  await resolveIosPhysicalDeviceControl(device).copyRunnerFile(
+    device,
+    remotePath,
+    outputPath,
+    bundleId,
+    undefined,
+    signal,
+  );
 }
 
 async function requireSuccessfulRunnerResponse(response: Response, command: string): Promise<void> {

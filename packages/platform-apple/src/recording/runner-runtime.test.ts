@@ -9,6 +9,7 @@ import { createAppleScreenRecordingOperations } from './runtime.ts';
 import {
   appleRecordingHost as appleHost,
   coreDevice,
+  simulator,
   coreDeviceRunnerStart,
   recordingInput as input,
 } from './runtime.fixtures.ts';
@@ -18,7 +19,7 @@ test('uses the closed Apple runner and finalizer for a CoreDevice recording', as
   const operations = createAppleScreenRecordingOperations({
     host: appleHost({
       apple: {
-        availability: async () => ({ available: true }),
+        availability: async () => ({ available: true, appRecordingBackend: 'runner' as const }),
         runRunner: async (_device: DeviceInfo, request: AppleScreenRecordingRunnerRequest) => {
           calls.push(request.kind);
           return {
@@ -295,4 +296,53 @@ test('refuses completion when the stable raw-file finalizer fails', async () => 
   expect(stop).toHaveBeenCalledOnce();
   expect(retrieve).toHaveBeenCalledOnce();
   expect(release).not.toHaveBeenCalled();
+});
+
+// A simctl process can exit while CoreSimulator still owns its recording slot.
+// App recordings must finish through the runner's exact recording authority.
+test('simulator app recording can finish, restart, and recover exact runner cleanup', async () => {
+  const calls: string[] = [];
+  let active = false;
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      apple: {
+        runRunner: async (_device, request) => {
+          calls.push(request.kind);
+          if (request.kind === 'start') {
+            assert.equal(active, false);
+            active = true;
+            return coreDeviceRunnerStart;
+          }
+          if (request.kind === 'stop') active = false;
+          return {};
+        },
+        retrieveRunnerRecording: async () => {
+          calls.push('retrieve');
+        },
+      },
+    }),
+    device: simulator,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const started = await operations.screenRecordingStart(input({ scope: 'app' }));
+    assert.equal((await started.pendingHandle.transfer().finish()).status, 'completed');
+  }
+  const abandoned = await operations.screenRecordingStart(input({ scope: 'app' }));
+  await expect(
+    operations.screenRecordingCleanup({ envelope: abandoned.envelope }),
+  ).resolves.toMatchObject({ status: 'cleaned' });
+  assert.equal(active, false);
+  assert.deepEqual(calls, [
+    'start',
+    'stop',
+    'retrieve',
+    'start',
+    'stop',
+    'retrieve',
+    'start',
+    'stop',
+    'release',
+  ]);
 });

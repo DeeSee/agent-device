@@ -1,16 +1,21 @@
-import type { DeviceInfo } from '@agent-device/kernel/device';
+import { deviceIdentity, type DeviceInfo } from '@agent-device/kernel/device';
 import type { RuntimeOwnerRef } from '@agent-device/contracts/platform-runtime';
 import type { CleanupOutcome, FinishOutcome } from '@agent-device/contracts/durable-resource';
-import type {
-  ScreenRecordingStartInput,
-  ScreenRecordingLiveSnapshot,
-  ScreenRecordingLiveHandle,
-  ScreenRecordingCompletion,
+import {
+  SCREEN_RECORDING_RESOURCE_KIND,
+  type ScreenRecordingStartInput,
+  type ScreenRecordingLiveSnapshot,
+  type ScreenRecordingLiveHandle,
+  type ScreenRecordingCompletion,
 } from '@agent-device/contracts/screen-recording-runtime';
 import { PendingTransferGuard } from '@agent-device/contracts/async-lifecycle';
-import { createScreenRecordingLiveHandle } from '@agent-device/capture-kit';
 import {
-  createAppleRecordingEnvelope,
+  createScreenRecordingLiveHandle,
+  createDurableResourceEnvelope,
+  encodeDurableDescriptor,
+} from '@agent-device/capture-kit';
+import {
+  appleRecordingDescriptorCodec,
   type AppleRecordingDescriptor,
   type AppleScreenRecordingOperationHost,
 } from './recovery.ts';
@@ -47,7 +52,15 @@ export function startResult(params: {
   });
   return Object.freeze({
     pendingHandle: new PendingTransferGuard(handle),
-    envelope: createAppleRecordingEnvelope({ device, owner, input, descriptor }),
+    envelope: createDurableResourceEnvelope({
+      resourceKind: SCREEN_RECORDING_RESOURCE_KIND,
+      sessionId: input.sessionId,
+      device: deviceIdentity(device),
+      owner,
+      fence: input.fence,
+      lifecycle: 'open',
+      descriptor: encodeDurableDescriptor(appleRecordingDescriptorCodec, descriptor),
+    }),
     ...(recoverableStartFailure ? { recoverableStartFailure } : {}),
   });
 }

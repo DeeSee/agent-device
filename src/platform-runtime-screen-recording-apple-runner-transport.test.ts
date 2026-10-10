@@ -26,6 +26,8 @@ const recovery = vi.hoisted(() => ({
   retrieve: vi.fn(),
   send: vi.fn(),
   copy: vi.fn(),
+  simctl: vi.fn(),
+  hostCopy: vi.fn(),
 }));
 
 vi.mock('@agent-device/platform-apple/runner/recording', async (importOriginal) => {
@@ -54,6 +56,15 @@ vi.mock('@agent-device/platform-apple/runner/recording', async (importOriginal) 
 
 vi.mock('@agent-device/platform-apple/physical-device', () => ({
   resolveIosPhysicalDeviceControl: () => ({ copyRunnerFile: recovery.copy }),
+}));
+
+vi.mock('@agent-device/host-kit/command', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agent-device/host-kit/command')>()),
+  runCmd: recovery.simctl,
+}));
+vi.mock('@agent-device/host-kit/host-file', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agent-device/host-kit/host-file')>()),
+  copyHostFile: recovery.hostCopy,
 }));
 
 const launchIdentity = Object.freeze({
@@ -526,3 +537,39 @@ test('keeps macOS runner recording ownership local to the requested output path'
     },
   );
 });
+
+for (const alive of [true, false]) {
+  test(`simulator recording retrieval preserves exact authority after daemon alive=${alive}`, async () => {
+    runner.snapshot.mockReturnValue(alive ? { alive: true } : null);
+    recovery.simctl.mockResolvedValue({
+      stdout: '/tmp/exact-runner-container\n',
+      stderr: '',
+      exitCode: 0,
+    });
+    const transport = resolveAppleRunnerScreenRecordingTransport();
+    const simulator = { ...device, kind: 'simulator' as const };
+    recovery.hostCopy.mockRejectedValueOnce(new Error('copy interrupted'));
+    await expect(
+      transport.retrieve({ device: simulator, recordingAuthority, outputPath: '/tmp/capture.mp4' }),
+    ).rejects.toThrow('copy interrupted');
+    expect(runner.release).not.toHaveBeenCalled();
+    recovery.hostCopy.mockResolvedValueOnce(undefined);
+    await transport.retrieve({
+      device: simulator,
+      recordingAuthority,
+      outputPath: '/tmp/capture.mp4',
+    });
+    expect(recovery.simctl).toHaveBeenCalledWith(
+      'xcrun',
+      ['simctl', 'get_app_container', device.id, launchIdentity.testHostContainerBundleId, 'data'],
+      expect.objectContaining({ timeoutMs: 10_000 }),
+    );
+    expect(recovery.hostCopy).toHaveBeenCalledWith(
+      '/tmp/exact-runner-container/' + recordingAuthority.remotePath,
+      '/tmp/capture.mp4',
+    );
+    expect(recovery.copy).not.toHaveBeenCalled();
+    if (alive)
+      expect(runner.release).toHaveBeenCalledWith(device.id, recordingAuthority, 'retrieved');
+  });
+}

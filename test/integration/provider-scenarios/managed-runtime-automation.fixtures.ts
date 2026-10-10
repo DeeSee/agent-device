@@ -148,6 +148,8 @@ export async function withManagedAdbFixture<T>(
       'const args = process.argv.slice(2);',
       `fs.appendFileSync(${JSON.stringify(callPath)}, JSON.stringify(args) + '\\n');`,
       'if (args.includes("fingerprint")) { process.stderr.write("unknown command"); process.exit(1); }',
+      // The optional rotation probe stays live until the failed capture cancels it.
+      `if (args.includes("dumpsys") && fs.existsSync(${JSON.stringify(path.join(root, 'corrupt-screenshot'))})) { setInterval(() => {}, 1000); return; }`,
       'if (args.includes("screencap")) {',
       `  if (fs.existsSync(${JSON.stringify(path.join(root, 'corrupt-screenshot'))})) { process.stdout.write('invalid'); process.exit(0); }`,
       `  process.stdout.write(Buffer.from('${AUTOMATION_PNG.toString('hex')}', 'hex'));`,

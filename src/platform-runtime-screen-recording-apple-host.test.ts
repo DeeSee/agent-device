@@ -35,7 +35,10 @@ test('reports a focused simulator transport as available', async () => {
       },
     },
     async () => {
-      await expect(host.availability(simulator)).resolves.toEqual({ available: true });
+      await expect(host.availability(simulator)).resolves.toEqual({
+        available: true,
+        appRecordingBackend: 'simulator',
+      });
     },
   );
 });

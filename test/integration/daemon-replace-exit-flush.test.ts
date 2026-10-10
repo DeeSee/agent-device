@@ -47,7 +47,8 @@ test('daemon replace mid-command returns a structured, parseable error and exits
     process.kill(info.pid, 'SIGKILL');
     await waitForProcessDeath(info.pid);
 
-    const result = runCliJson(['close', '--json', '--state-dir', stateDir]);
+    // Closing a missing session is idempotent; press requires a live session.
+    const result = runCliJson(['press', '1', '1', '--json', '--state-dir', stateDir]);
 
     assert.equal(result.status, 1, formatUnexpected('exit code', result));
     assert.ok(

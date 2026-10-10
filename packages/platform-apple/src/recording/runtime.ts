@@ -78,14 +78,21 @@ export function createAppleScreenRecordingOperations(params: {
 async function startAppleRecording(params: AppleRecordingStartParams) {
   params.signal.throwIfAborted();
   validateAppleRecordingRequest(params.device, params.input);
-  return params.device.kind === 'simulator'
+  await validateAppleSimulatorRecording(
+    params.device,
+    params.input,
+    params.host.screenRecording.apple.isRunnerBundleId,
+  );
+  const availability = await params.host.screenRecording.apple.availability(params.device);
+  return params.device.kind === 'simulator' &&
+    (params.input.scope !== 'app' ||
+      (availability.available && availability.appRecordingBackend === 'simulator'))
     ? await startAppleSimulatorRecording(params)
     : await startAppleRunnerRecording(params);
 }
 
 async function startAppleSimulatorRecording(params: AppleRecordingStartParams) {
   const { host, device, owner, input, signal } = params;
-  await validateAppleSimulatorRecording(device, input, host.screenRecording.apple.isRunnerBundleId);
   const clockAnchor = input.activeSessionApp
     ? await host.screenRecording.apple.captureClockAnchor(
         device,

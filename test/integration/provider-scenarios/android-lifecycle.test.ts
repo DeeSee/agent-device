@@ -447,9 +447,11 @@ async function runAndroidSetupAndInstallWorkflow(
     ['com.example.demo', './payload.json'],
     selection,
     {
-      meta: { cwd: tempRoot },
+      session: 'default',
+      meta: { cwd: tempRoot, sessionExplicit: true },
     },
   );
+  assert.equal(filePush.json?.error, undefined, JSON.stringify(filePush.json));
   assert.equal(filePush.json.result.data.package, 'com.example.demo');
   assert.equal(filePush.json.result.data.action, 'com.example.demo.FILE_PUSH');
   assert.equal(filePush.json.result.data.extrasCount, 1);
@@ -467,7 +469,7 @@ async function runAndroidSetupAndInstallWorkflow(
     'push',
     ['com.example.demo', './{payload}.json'],
     selection,
-    { meta: { cwd: tempRoot } },
+    { session: 'default', meta: { cwd: tempRoot, sessionExplicit: true } },
   );
   assert.equal(braceFilePush.json.result.data.package, 'com.example.demo');
   assert.equal(braceFilePush.json.result.data.action, 'com.example.demo.BRACE_PUSH');

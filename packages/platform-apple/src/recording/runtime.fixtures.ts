@@ -108,7 +108,8 @@ export function appleRecordingHost(
     });
   const apple = Object.assign(
     {
-      availability: async () => ({ available: true }) as const,
+      availability: async () =>
+        ({ available: true, appRecordingBackend: 'runner' as const }) as const,
       runRunner: async (_device: DeviceInfo, request: AppleScreenRecordingRunnerRequest) =>
         request.kind === 'start' ? coreDeviceRunnerStart : {},
       startSimulator,

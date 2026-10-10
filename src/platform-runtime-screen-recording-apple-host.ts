@@ -63,8 +63,12 @@ async function appleScreenRecordingAvailability(device: DeviceInfo) {
   if (device.kind === 'simulator') {
     const { resolveAppleSimulatorScreenRecordingTransport } =
       await import('./platform-runtime-screen-recording-apple-transport.ts');
-    return resolveAppleSimulatorScreenRecordingTransport().available
-      ? ({ available: true } as const)
+    const transport = resolveAppleSimulatorScreenRecordingTransport();
+    return transport.available
+      ? ({
+          available: true,
+          appRecordingBackend: transport.mode === 'local' ? 'runner' : 'simulator',
+        } as const)
       : ({
           available: false,
           hint: 'Configure a focused Apple simulator recording transport for this provider.',
@@ -73,7 +77,7 @@ async function appleScreenRecordingAvailability(device: DeviceInfo) {
   const { resolveAppleRunnerScreenRecordingTransport } =
     await import('./platform-runtime-screen-recording-apple-runner-transport.ts');
   return resolveAppleRunnerScreenRecordingTransport().available
-    ? ({ available: true } as const)
+    ? ({ available: true, appRecordingBackend: 'runner' } as const)
     : ({
         available: false,
         hint: 'This scoped Apple runner provider does not expose durable recording authority.',

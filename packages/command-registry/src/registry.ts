@@ -30,7 +30,6 @@ import {
   writeAppContainerJsonUse,
   readAppContainerJsonUse,
 } from '@agent-device/contracts/app-deployment-runtime-plan';
-import { appProcessesUse } from '@agent-device/contracts/app-processes-runtime';
 import {
   closeApplicationRuntimePlanUses,
   openApplicationRuntimePlanUses,
@@ -42,6 +41,7 @@ import { audioRuntimePlanUses } from '@agent-device/contracts/audio-runtime-plan
 import { networkDumpUse } from '@agent-device/contracts/network-runtime-plan';
 import { inventoryUse } from '@agent-device/contracts/platform-module';
 import {
+  appProcessesUse,
   alertRuntimePlanUses,
   actionButtonRuntimeUse,
   foldRuntimeUse,
