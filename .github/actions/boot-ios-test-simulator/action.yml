@@ -68,5 +68,10 @@ runs:
           xcrun simctl list devices || true
           exit 1
         fi
-        exit "$BOOTSTATUS_EXIT"
+        if [ "$BOOTSTATUS_EXIT" -ne 0 ]; then
+          exit "$BOOTSTATUS_EXIT"
+        fi
+        # The secure-input regression exercises a non-Latin keyboard before automatic preparation.
+        xcrun simctl spawn "$UDID" defaults write -g AppleKeyboards -array \
+          'en_US@sw=QWERTY;hw=Automatic' 'ru_RU@sw=Russian;hw=Automatic' 'emoji@sw=Emoji'
       shell: bash

@@ -57,6 +57,15 @@ extension RunnerTests {
     } else {
       target = focusTextInputForTextEntry(app: activeApp, x: command.x, y: command.y)
     }
+#if os(iOS)
+    guard prepareKeyboardForSecureASCIIText(app: activeApp, text: text) else {
+      return Response(ok: false, error: ErrorPayload(
+        code: "TEXT_INPUT_KEYBOARD_LAYOUT_UNAVAILABLE",
+        message: "The visible keyboard cannot enter the requested Latin text.",
+        hint: "Enable a Latin keyboard, then retry type or fill. No text was entered."
+      ))
+    }
+#endif
     NSLog(
       "AGENT_DEVICE_RUNNER_TEXT_ENTRY_PHASE commandId=%@ phase=focus durationMs=%.1f chars=%d mode=%@",
       command.commandId ?? "",

@@ -58,6 +58,8 @@ int main(int argc, const char *argv[]) {
 #import <UIKit/UIKit.h>
 #if TARGET_OS_IOS
 #import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
+#import <objc/message.h>
 #endif
 
 @interface AgentDeviceRunnerViewController : UIViewController
@@ -79,13 +81,28 @@ int main(int argc, const char *argv[]) {
 @end
 
 #if TARGET_OS_IOS
-@interface AgentDeviceRunnerViewController () <UNUserNotificationCenterDelegate>
+@interface AgentDeviceRunnerViewController () <UNUserNotificationCenterDelegate, WKScriptMessageHandler>
 @end
 #endif
 
 @implementation AgentDeviceRunnerViewController
 
 #if TARGET_OS_IOS
+// Keyboard history must not change the regression's starting input mode.
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+  (void)controller;
+  (void)message;
+  for (UITextInputMode *mode in UITextInputMode.activeInputModes) {
+    if ([mode.primaryLanguage hasPrefix:@"ru"]) {
+      Class keyboardClass = NSClassFromString(@"UIKeyboardImpl");
+      id keyboard = ((id (*)(id, SEL))objc_msgSend)(keyboardClass, NSSelectorFromString(@"sharedInstance"));
+      NSString *identifier = [mode valueForKey:@"identifier"];
+      ((void (*)(id, SEL, id, BOOL))objc_msgSend)(keyboard, NSSelectorFromString(@"setInputMode:userInitiated:"), identifier, YES);
+      return;
+    }
+  }
+}
+
 // An animation that never ends is what "busy" looks like to XCTest while it decides whether the app
 // may receive an event: the app keeps reporting work in flight, which is the state that cost an alert
 // command its whole deadline in #2546. It stops the moment an alert button is answered, since that
@@ -319,6 +336,24 @@ static const NSTimeInterval AgentDeviceTextEntryBurstBreakSeconds = 1.0;
 
   // Keep the fixture behind a launch argument so normal runner snapshots remain unchanged.
 #if TARGET_OS_IOS
+  if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-web-password-regression"]) {
+    WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+    [configuration.userContentController addScriptMessageHandler:self name:@"keyboardFixture"];
+    WKWebView *webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+    webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:webView];
+    [webView loadHTMLString:@"<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<input id='username' aria-label='Username' style='margin-top:80px;font-size:24px'>"
+      "<div id='plainResult' role='status'></div>"
+      "<input id='password' aria-label='Password' type='password' style='font-size:24px'>"
+      "<div id='result' role='status'></div>"
+      "<script>for(const field of [username,password])field.addEventListener('focus',()=>"
+      "window.webkit.messageHandlers.keyboardFixture.postMessage('focus'));"
+      "username.addEventListener('input',()=>{plainResult.textContent=username.value==='Test12345'"
+      "?'Username accepted':''});password.addEventListener('input',()=>{result.textContent=password.value==='Test12345'"
+      "?'Password accepted':'Password length: '+password.value.length});</script>"
+      baseURL:nil];
+  }
   if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-alert-replacement-regression"]) {
     self.alertActionStatus = label;
     label.accessibilityIdentifier = @"agent-device-alert-actions";

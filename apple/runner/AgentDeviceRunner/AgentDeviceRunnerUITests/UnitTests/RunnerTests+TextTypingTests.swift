@@ -5,6 +5,34 @@ import XCTest
 extension RunnerTests {
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS && os(iOS)
   @MainActor
+  func testSecureWebInputReceivesEveryTypedCharacter() throws {
+    app.launchArguments = ["--agent-device-web-password-regression"]
+    app.launch()
+    defer { app.terminate() }
+    let username = app.textFields["Username"]
+    XCTAssertTrue(username.waitForExistence(timeout: appExistenceTimeout))
+    username.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: appExistenceTimeout))
+    assertRussianKeyboardSelected()
+    let plainResponse = executeTypeCommand(activeApp: app, command: try runnerCommandFixture(
+      #"{"command":"type","text":"Test12345","textEntryMode":"append"}"#
+    ))
+    XCTAssertTrue(plainResponse.ok, String(describing: plainResponse.error))
+    XCTAssertTrue(app.staticTexts["Username accepted"].waitForExistence(timeout: appExistenceTimeout))
+    let field = app.secureTextFields["Password"]
+    XCTAssertTrue(field.waitForExistence(timeout: appExistenceTimeout))
+    field.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: appExistenceTimeout))
+    assertRussianKeyboardSelected()
+    let response = executeTypeCommand(activeApp: app, command: try runnerCommandFixture(
+      #"{"command":"type","text":"Test12345","textEntryMode":"append"}"#
+    ))
+    XCTAssertTrue(response.ok, String(describing: response.error))
+    XCTAssertTrue(app.staticTexts["Password accepted"].waitForExistence(timeout: appExistenceTimeout), app.debugDescription)
+    XCTAssertEqual(username.value as? String, "Test12345")
+  }
+
+  @MainActor
   func testTypeWithoutResolvedInputReturnsTypedFailureBeforeDispatchingText() throws {
     let command = try runnerCommandFixture(
       #"{"command":"type","commandId":"type-without-focus","text":"hello","textEntryMode":"append"}"#
@@ -215,6 +243,12 @@ extension RunnerTests {
       Thread.sleep(forTimeInterval: 0.25)
     }
     XCTAssertEqual(observed, text)
+  }
+
+  @MainActor
+  private func assertRussianKeyboardSelected() {
+    let russianKey = app.keyboards.keys.matching(NSPredicate(format: "label IN %@", ["й", "Й"])).firstMatch
+    XCTAssertTrue(russianKey.waitForExistence(timeout: appExistenceTimeout), app.debugDescription)
   }
 
   private struct UnavailableTextEntrySynthesizer: TextEntrySynthesizing {
