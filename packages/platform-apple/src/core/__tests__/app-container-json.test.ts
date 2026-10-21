@@ -109,7 +109,7 @@ test('simulator JSON read rejects symlink escape without reading the target', as
   expect(readText).not.toHaveBeenCalled();
 });
 
-test('JSON reads refuse nonobject and oversized app files', async () => {
+test('JSON reads accept 512 KiB and refuse nonobject or larger app files', async () => {
   let contents = '[]';
   const fixture = dependencies(
     vi.fn(async (args) => {
@@ -128,7 +128,11 @@ test('JSON reads refuse nonobject and oversized app files', async () => {
       fixture.value,
     );
   await expect(read()).rejects.toMatchObject({ code: 'COMMAND_FAILED' });
-  contents = JSON.stringify({ value: 'x'.repeat(256 * 1024) });
+  contents = JSON.stringify({
+    value: 'x'.repeat(512 * 1024 - JSON.stringify({ value: '' }).length),
+  });
+  expect((await read()).byteLength).toBe(512 * 1024);
+  contents = JSON.stringify({ value: 'x'.repeat(512 * 1024) });
   await expect(read()).rejects.toMatchObject({
     code: 'COMMAND_FAILED',
     details: { reason: 'app_container_json_too_large' },

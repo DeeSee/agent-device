@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createAgentDeviceClient } from '../agent-device-client.ts';
 import type { AgentDeviceDaemonTransport } from '@agent-device/contracts/client';
 
@@ -29,6 +30,32 @@ test('app JSON read preserves exact request identity and the returned data recei
     command: 'app_container_read_json',
     session: options.session,
     input: { app: options.app, containerPath: options.containerPath },
+  });
+});
+
+test('app JSON read accepts 512 KiB and refuses a larger result', async () => {
+  let payload = 'x'.repeat(512 * 1024 - JSON.stringify({ payload: '' }).length);
+  const transport = vi.fn<AgentDeviceDaemonTransport>(async () => {
+    const value = { payload };
+    const source = JSON.stringify(value);
+    return {
+      ok: true as const,
+      data: {
+        ...receipt,
+        sha256: createHash('sha256').update(source).digest('hex'),
+        byteLength: Buffer.byteLength(source),
+        value,
+      },
+    };
+  });
+  const client = createAgentDeviceClient(
+    { daemonBaseUrl: 'http://daemon.example.test' },
+    { transport },
+  );
+  expect((await client.apps.files.readJson(options)).byteLength).toBe(512 * 1024);
+  payload += 'x';
+  await expect(client.apps.files.readJson(options)).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
   });
 });
 

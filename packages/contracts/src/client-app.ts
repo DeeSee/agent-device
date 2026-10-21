@@ -197,7 +197,7 @@ export type AppProcessesResult = Readonly<{
   identifiers: AgentDeviceIdentifiers;
 }>;
 
-/** Read a JSON object from an exact app data path, bounded to 256 KiB and 128 nesting levels. */
+/** Read a JSON object from an exact app data path, bounded to 512 KiB and 128 nesting levels. */
 export type AppContainerReadJsonOptions = AgentDeviceRequestOverrides &
   AgentDeviceSelectionOptions & {
     app: string;

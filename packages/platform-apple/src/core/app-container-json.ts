@@ -67,7 +67,7 @@ const defaultDependencies: AppleAppContainerJsonDependencies = Object.freeze({
   readText: async (pathname) => {
     const status = await hostFileLstat(pathname);
     if (status.size > APP_CONTAINER_JSON_MAX_BYTES) {
-      throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 256 KiB limit', {
+      throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 512 KiB limit', {
         reason: 'app_container_json_too_large',
       });
     }
@@ -170,7 +170,7 @@ export async function readAppleAppContainerJson(
   signal.throwIfAborted();
   const receipt = digest(contents);
   if (receipt.byteLength > APP_CONTAINER_JSON_MAX_BYTES) {
-    throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 256 KiB limit', {
+    throw new AppError('COMMAND_FAILED', 'App-container JSON exceeds the 512 KiB limit', {
       reason: 'app_container_json_too_large',
     });
   }

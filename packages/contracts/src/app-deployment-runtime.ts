@@ -69,7 +69,7 @@ export type AppContainerReadJsonResult = Readonly<{
   value: JsonObject;
 }>;
 
-export const APP_CONTAINER_JSON_MAX_BYTES = 256 * 1024;
+export const APP_CONTAINER_JSON_MAX_BYTES = 512 * 1024;
 const APP_CONTAINER_JSON_MAX_DEPTH = 128;
 
 export function isBoundedAppContainerJsonObject(value: unknown): value is JsonObject {
