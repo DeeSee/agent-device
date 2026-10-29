@@ -25,7 +25,11 @@ It accepts neither `path` nor `responseLevel`. Remote captures use the daemon ar
 The Node client also accepts a request `signal` for cancellation. `sessions.reserve` claims an exact
 local target before launching an app; `sessions.open` consumes that reservation and `sessions.close`
 releases it. `apps.reinstall` can derive the app identity from its artifact. `apps.files.writeJson`
-writes verified JSON inside an Apple app data container.
+writes verified JSON inside an Apple app data container. `apps.files.readJson` reports confirmed
+absence as `COMMAND_FAILED` with `details.reason: "app_container_json_not_found"`; it never
+substitutes an empty object. On a physical device, a failed copy is classified as missing only
+when a successful listing of the same app's parent directory excludes the file. An unavailable
+container or an inconclusive listing retains the original copy error.
 
 `daemon.stop` requires explicit local `stateDir` and `deviceClaimsDir` construction options. It requests
 a graceful stop and reports whether cleanup was confirmed for that exact daemon. A timed-out stop

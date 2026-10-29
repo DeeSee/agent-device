@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { mkdtempForTest } from '../../__tests__/tmp-dir.ts';
 import path from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { runIosDevicectlJsonRequest } from '../devicectl.ts';
+
+vi.mock('../devicectl.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../devicectl.ts')>()),
+  runIosDevicectlJsonRequest: vi.fn(),
+}));
+afterEach(() => vi.resetAllMocks());
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import {
   type AppleAppContainerJsonDependencies,
@@ -346,4 +353,131 @@ test('simulator cancellation before publish leaves the destination unchanged', a
     ),
   ).rejects.toThrow('cancelled before publish');
   expect(files.get('/private/sim/data/Documents/local_config.json')).toBe('{"old":true}\n');
+});
+
+test('physical missing JSON is identified only by a successful parent listing', async () => {
+  const fixture = dependencies(
+    vi.fn(async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'Failed to retrieve the file node (com.apple.dt.CoreDeviceError error 7000)',
+    })),
+  );
+  const read = () =>
+    readAppleAppContainerJson(
+      appleDevice('device'),
+      {
+        appId: 'ru.yandex.mobile.dev',
+        containerPath: 'Documents/local_config.json',
+      },
+      new AbortController().signal,
+      fixture.value,
+    );
+  const listing = (files: unknown[]) => ({
+    ok: true as const,
+    payload: {
+      result: { domain: 'appDataContainer', domainIdentifier: 'ru.yandex.mobile.dev', files },
+    },
+  });
+  vi.mocked(runIosDevicectlJsonRequest).mockResolvedValue(
+    listing([
+      { name: 'Downloads', relativePath: 'Downloads', resources: { isDirectory: true } },
+      {
+        name: 'server_config.json',
+        relativePath: 'server_config.json',
+        resources: { isDirectory: false },
+      },
+    ]),
+  );
+  await expect(read()).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
+    details: { reason: 'app_container_json_not_found' },
+  });
+  expect(runIosDevicectlJsonRequest).toHaveBeenCalledWith(
+    expect.objectContaining({
+      args: [
+        'devicectl',
+        'device',
+        'info',
+        'files',
+        '--device',
+        'physical-1',
+        '--domain-type',
+        'appDataContainer',
+        '--domain-identifier',
+        'ru.yandex.mobile.dev',
+        '--subdirectory',
+        'Documents',
+        '--no-recurse',
+      ],
+    }),
+  );
+
+  for (const outcome of [
+    listing([{ name: 'local_config.json', relativePath: 'local_config.json' }]),
+    {
+      ok: false as const,
+      reason: 'command-failed' as const,
+      args: [],
+      result: { exitCode: 1, stdout: '', stderr: 'Device is not paired' },
+    },
+    { ok: true as const, payload: { result: { files: [] } } },
+    {
+      ok: true as const,
+      payload: {
+        result: {
+          domain: 'appDataContainer',
+          domainIdentifier: 'another.app',
+          files: [],
+        },
+      },
+    },
+  ]) {
+    vi.mocked(runIosDevicectlJsonRequest).mockResolvedValue(outcome);
+    await expect(read()).rejects.toMatchObject({
+      code: 'COMMAND_FAILED',
+      message: 'Failed to copy app container JSON from the device',
+      details: expect.not.objectContaining({ reason: 'app_container_json_not_found' }),
+    });
+  }
+});
+
+test('physical write failures never become missing-target JSON errors', async () => {
+  const fixture = dependencies(vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: 'missing' })));
+  await expect(
+    writeVerifiedAppleAppContainerJson(
+      appleDevice('device'),
+      {
+        appId: 'ru.yandex.mobile.dev',
+        containerPath: 'Documents/local_config.json',
+        serializedValue: VALUE,
+      },
+      new AbortController().signal,
+      fixture.value,
+    ),
+  ).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
+    message: 'Failed to copy app container JSON to the device',
+  });
+  expect(runIosDevicectlJsonRequest).not.toHaveBeenCalled();
+});
+
+test('missing simulator JSON has the same typed reason after resolving the app container', async () => {
+  const root = await mkdtempForTest('agent-device-json-absent-');
+  await fs.mkdir(path.join(root, 'Documents'));
+  const fixture = dependencies(vi.fn(async () => ({ exitCode: 0, stdout: root, stderr: '' })));
+  await expect(
+    readAppleAppContainerJson(
+      appleDevice('simulator'),
+      {
+        appId: 'ru.yandex.mobile.dev',
+        containerPath: 'Documents/local_config.json',
+      },
+      new AbortController().signal,
+      fixture.value,
+    ),
+  ).rejects.toMatchObject({
+    code: 'COMMAND_FAILED',
+    details: { reason: 'app_container_json_not_found' },
+  });
 });

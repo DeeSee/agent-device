@@ -21,6 +21,7 @@ import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { execFailureDetails, type ExecResult } from '@agent-device/host-kit/command';
 import { buildSimctlArgsForDevice } from './simctl.ts';
+import { runIosDevicectlJsonRequest } from './devicectl.ts';
 import { runXcrun } from './tool-provider.ts';
 
 const COPY_TIMEOUT_MS = 30_000;
@@ -198,23 +199,28 @@ async function readSimulatorContainerJson(
 ): Promise<string> {
   const root = await resolveSimulatorDataContainer(device, appId, signal, dependencies);
   const resolvedRoot = await resolveHostPath(root);
-  const components = containerPath.split('/');
-  const filename = components.pop()!;
-  const parent = await resolveRealDirectoryUnderRoot(resolvedRoot, components, false);
-  const pathname = path.join(parent, filename);
-  const status = await hostFileLstat(pathname);
-  if (
-    !status.isFile() ||
-    status.isSymbolicLink() ||
-    (await resolveHostPath(pathname)) !== pathname
-  ) {
-    throw new AppError(
-      'COMMAND_FAILED',
-      'App container JSON must be a regular file inside its data container',
-    );
+  try {
+    const components = containerPath.split('/');
+    const filename = components.pop()!;
+    const parent = await resolveRealDirectoryUnderRoot(resolvedRoot, components, false);
+    const pathname = path.join(parent, filename);
+    const status = await hostFileLstat(pathname);
+    if (
+      !status.isFile() ||
+      status.isSymbolicLink() ||
+      (await resolveHostPath(pathname)) !== pathname
+    ) {
+      throw new AppError(
+        'COMMAND_FAILED',
+        'App container JSON must be a regular file inside its data container',
+      );
+    }
+    signal.throwIfAborted();
+    return await dependencies.readText(pathname);
+  } catch (error) {
+    if (isMissingPath(error)) throw missingJsonFile(appId, containerPath);
+    throw error;
   }
-  signal.throwIfAborted();
-  return await dependencies.readText(pathname);
 }
 
 async function writeAndReadPhysical(
@@ -271,6 +277,13 @@ async function runDeviceCopy(
     { allowFailure: true, signal, timeoutMs: COPY_TIMEOUT_MS },
   );
   signal.throwIfAborted();
+  if (result.exitCode !== 0 && direction === 'from') {
+    const missing = await confirmMissingDeviceJson(device, appId, source, signal).catch(
+      () => false,
+    );
+    signal.throwIfAborted();
+    if (missing) throw missingJsonFile(appId, source);
+  }
   requireSuccess(result, `Failed to copy app container JSON ${direction} the device`);
 }
 
@@ -394,4 +407,57 @@ function requireContainerPath(value: string): string {
   const checked = checkAppContainerJsonPath(value);
   if (!checked.valid) throw new AppError('INVALID_ARGS', checked.message);
   return checked.path;
+}
+
+async function confirmMissingDeviceJson(
+  device: DeviceInfo,
+  appId: string,
+  containerPath: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  // CoreDevice error 7000 does not distinguish an absent file from a failed lookup.
+  const outcome = await runIosDevicectlJsonRequest({
+    jsonPrefix: 'agent-device-app-json-files',
+    args: [
+      'devicectl',
+      'device',
+      'info',
+      'files',
+      '--device',
+      device.id,
+      '--domain-type',
+      'appDataContainer',
+      '--domain-identifier',
+      appId,
+      '--subdirectory',
+      path.posix.dirname(containerPath),
+      '--no-recurse',
+    ],
+    timeoutMs: 5_000,
+    signal,
+  });
+  if (!outcome.ok || !isRecord(outcome.payload) || !isRecord(outcome.payload.result)) return false;
+  const result = outcome.payload.result;
+  if (
+    result.domain !== 'appDataContainer' ||
+    result.domainIdentifier !== appId ||
+    !Array.isArray(result.files) ||
+    !result.files.every(
+      (file) => isRecord(file) && typeof file.name === 'string' && file.name.length > 0,
+    )
+  )
+    return false;
+  return !result.files.some((file) => file.name === path.posix.basename(containerPath));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function missingJsonFile(appId: string, containerPath: string): AppError {
+  return new AppError('COMMAND_FAILED', 'App container JSON file does not exist', {
+    reason: 'app_container_json_not_found',
+    appId,
+    containerPath,
+  });
 }
